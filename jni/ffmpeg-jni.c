@@ -51,9 +51,7 @@ static void fill_bitmap(AndroidBitmapInfo*  info, void *pixels, AVFrame *pFrame)
     }
 }
 
-int Java_com_iped_ffmpeg_test_Main_openFile(JNIEnv * env, jobject this,jstring name)
-{
-    int ret;
+JNIEXPORT int JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(JNIEnv * env, jobject this,jstring name) { int ret;
     int err;
     int i;
     AVCodec *pCodec;
@@ -68,7 +66,7 @@ int Java_com_iped_ffmpeg_test_Main_openFile(JNIEnv * env, jobject this,jstring n
         LOGI(10,"Couldn't open file");
         return open_file_fail;
     }
-    LOGE(1,"Opened file");
+    LOGI(10,"Opened file");
     
     if(av_find_stream_info(pFormatCtx)<0) {
         LOGI(10,"Unable to get stream info");
@@ -114,7 +112,7 @@ int Java_com_iped_ffmpeg_test_Main_openFile(JNIEnv * env, jobject this,jstring n
   return  open_file_success;
 }
 
-int Java_com_iped_ffmpeg_test_Main_drawFrame(JNIEnv * env, jobject this, jstring bitmap)
+int Java_com_sky_drovik_player_ffmpeg_JniUtils_drawFrame(JNIEnv * env, jobject this, jstring bitmap)
 {
     AndroidBitmapInfo  info;
     void*              pixels;
@@ -173,7 +171,7 @@ int Java_com_iped_ffmpeg_test_Main_drawFrame(JNIEnv * env, jobject this, jstring
    return stream_read_over;
 }
 
-JNIEXPORT jintArray JNICALL Java_com_iped_ffmpeg_test_Main_getVideoResolution(JNIEnv *pEnv, jobject pObj) {
+JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_getVideoResolution(JNIEnv *pEnv, jobject pObj) {
     jintArray lRes;
     lRes = (*pEnv)->NewIntArray(pEnv, 4);
     if (lRes == NULL) {
@@ -331,7 +329,7 @@ static void get_video_info(char *prFilename) {
     LOGI(10, "get video info ends");
 }
 
-JNIEXPORT void JNICALL Java_com_iped_ffmpeg_test_Main_close(JNIEnv *pEnv, jobject pObj) {
+JNIEXPORT void JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_close(JNIEnv *pEnv, jobject pObj) {
 
     /* close the RGB image */
     av_free(buffer);
@@ -347,7 +345,7 @@ JNIEXPORT void JNICALL Java_com_iped_ffmpeg_test_Main_close(JNIEnv *pEnv, jobjec
     av_close_input_file(pFormatCtx);	
 }
 
-JNIEXPORT void JNICALL Java_com_iped_ffmpeg_test_Main_init(JNIEnv *pEnv, jobject pObj, jstring pFileName) {
+JNIEXPORT void JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_init(JNIEnv *pEnv, jobject pObj, jstring pFileName) {
     int l_mbH, l_mbW;
     /*get the video file name*/
     gFileName = (char *)(*pEnv)->GetStringUTFChars(pEnv, pFileName, NULL);
@@ -360,12 +358,12 @@ JNIEXPORT void JNICALL Java_com_iped_ffmpeg_test_Main_init(JNIEnv *pEnv, jobject
     LOGI(10, "initialization done");
 }
 
-JNIEXPORT jstring JNICALL Java_com_iped_ffmpeg_test_Main_videoCodecName(JNIEnv *pEnv, jobject pObj) {
+JNIEXPORT jstring JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_videoCodecName(JNIEnv *pEnv, jobject pObj) {
     char* lCodecName = gVideoCodecCtx->codec->name;
     return (*pEnv)->NewStringUTF(pEnv, lCodecName);
 }
 
-JNIEXPORT jstring JNICALL Java_com_iped_ffmpeg_test_Main_videoFormatName(JNIEnv *pEnv, jobject pObj) {
+JNIEXPORT jstring JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_videoFormatName(JNIEnv *pEnv, jobject pObj) {
     char* lFormatName = gFormatCtx->iformat->name;
     return (*pEnv)->NewStringUTF(pEnv, lFormatName);
 }
