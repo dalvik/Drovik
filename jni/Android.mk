@@ -4,6 +4,8 @@ include $(CLEAR_VARS)
  
 LOCAL_MODULE := ffmpeg
  
+SDL_PATH = SDL
+
 include $(LOCAL_PATH)/config.mak
 
 LOCAL_CFLAGS := -DHAVE_AV_CONFIG_H -std=c99

@@ -26,6 +26,7 @@ enum {
 	open_file_success = 0,
 	get_stream_info_fail = -2,
 	find_video_stream_fail = -3,
+	find_audio_stream_fail = -9,
 	unsurpport_codec = -4,
 	open_codec_fail = - 5,
 	bitmap_getinfo_error = -6,

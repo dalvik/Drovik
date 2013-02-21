@@ -6,6 +6,10 @@ this is the wrapper of the native functions
 #include <android/log.h>
 #include <android/bitmap.h>
 #include "ffmpeg-jni.h"
+
+//#include <SDL.h>
+//#include <SDL_thread.h>
+
 /*for android logs*/
 #define LOG_TAG "FFmpegTest"
 #define LOG_LEVEL 10
@@ -20,13 +24,15 @@ AVFormatContext *gFormatCtx;
 int gVideoStreamIndex;    //video stream index
 
 AVCodecContext *gVideoCodecCtx;
-
+AVCodecContext *aCodecCtx;
+AVCodec *aCodec;
 /* Cheat to keep things simple and just use some globals. */
 AVFormatContext *pFormatCtx;
 AVCodecContext *pCodecCtx;
 AVFrame *pFrame;
 AVFrame *pFrameRGB;
 int videoStream;
+int audioStream;
 
 static void fill_bitmap(AndroidBitmapInfo*  info, void *pixels, AVFrame *pFrame)
 {
@@ -74,19 +80,24 @@ JNIEXPORT int JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(J
     }
     
     videoStream = -1;
+    audioStream = -1;
     for (i=0; i<pFormatCtx->nb_streams; i++) {
-        if(pFormatCtx->streams[i]->codec->codec_type==AVMEDIA_TYPE_VIDEO) {
+        if(pFormatCtx->streams[i]->codec->codec_type==AVMEDIA_TYPE_VIDEO && videoStream<0) {
             videoStream = i;
-            break;
         }
+		if(pFormatCtx->streams[i]->codec->codec_type==AVMEDIA_TYPE_AUDIO && audioStream<0) {
+			audioStream = i;
+		}
     }
     if(videoStream==-1) {
         LOGE(1,"Unable to find video stream");
         return find_video_stream_fail;
     }
     
-    LOGI(10,"Video stream is [%d]", videoStream);
-    
+    if(audioStream==-1) {
+        LOGE(1,"Unable to find audio stream");
+        return find_audio_stream_fail;
+    }
     pCodecCtx=pFormatCtx->streams[videoStream]->codec;
     
     pCodec=avcodec_find_decoder(pCodecCtx->codec_id);
@@ -94,12 +105,21 @@ JNIEXPORT int JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(J
         LOGE(1,"Unsupported codec");
         return unsurpport_codec;
     }
-    
     if(avcodec_open(pCodecCtx, pCodec)<0) {
         LOGE(1,"Unable to open codec");
         return open_codec_fail;
     }
     
+	aCodecCtx=pFormatCtx->streams[audioStream]->codec;   
+	aCodec = avcodec_find_decoder(aCodecCtx->codec_id);
+	if(!aCodec) {
+		LOGE(1,"Unsupported audio codec!");
+		return unsurpport_codec;
+	}
+	if(avcodec_open(aCodecCtx, aCodec)<0){
+        LOGE(1,"Unable to open audio codec");
+		return open_codec_fail;
+	}
     pFrame=avcodec_alloc_frame();
     pFrameRGB=avcodec_alloc_frame();
     LOGI(10,"Video size is [%d x %d]", pCodecCtx->width, pCodecCtx->height);
