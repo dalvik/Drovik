@@ -16,24 +16,6 @@ this is the wrapper of the native functions
 #define LOGI(level, ...) if (level <= LOG_LEVEL) {__android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__);}
 #define LOGE(level, ...) if (level <= LOG_LEVEL) {__android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__);}
 
-
-/**/
-char *gFileName;	  //the file name of the video
-uint8_t *buffer;
-AVFormatContext *gFormatCtx;
-int gVideoStreamIndex;    //video stream index
-
-AVCodecContext *gVideoCodecCtx;
-AVCodecContext *aCodecCtx;
-AVCodec *aCodec;
-/* Cheat to keep things simple and just use some globals. */
-AVFormatContext *pFormatCtx;
-AVCodecContext *pCodecCtx;
-AVFrame *pFrame;
-AVFrame *pFrameRGB;
-int videoStream;
-int audioStream;
-
 static void fill_bitmap(AndroidBitmapInfo*  info, void *pixels, AVFrame *pFrame)
 {
     uint8_t *frameLine;
@@ -129,6 +111,8 @@ JNIEXPORT int JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(J
     buffer=(uint8_t *)av_malloc(numBytes*sizeof(uint8_t));
 
     avpicture_fill((AVPicture *)pFrameRGB, buffer, PIX_FMT_RGB24, pCodecCtx->width, pCodecCtx->height);
+	PacketQueue audioq;
+	packet_queue_init(&audioq);
   return  open_file_success;
 }
 
@@ -150,13 +134,8 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_drawFrame(JNIEnv * env, jobject t
         return bitmap_getinfo_error;
     }
    // LOGI(10,"Checked on the bitmap");
-
-    if ((ret = AndroidBitmap_lockPixels(env, bitmap, &pixels)) < 0) {
-        LOGE(1,"AndroidBitmap_lockPixels() failed ! error=%d", ret);
-    }
-
     i = 0;
-    while((i==0) && (av_read_frame(pFormatCtx, &packet)>=0)) {
+    while((av_read_frame(pFormatCtx, &packet)>=0)) {
   		if(packet.stream_index==videoStream) {
             avcodec_decode_video2(pCodecCtx, pFrame, &frameFinished, &packet);
     		if(frameFinished) {
@@ -176,17 +155,32 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_drawFrame(JNIEnv * env, jobject t
                     return initialize_conversion_error;
                 }
                 sws_scale(img_convert_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, pCodecCtx->height, pFrameRGB->data, pFrameRGB->linesize);
-
+				if ((ret = AndroidBitmap_lockPixels(env, bitmap, &pixels)) < 0) {
+					LOGE(1,"AndroidBitmap_lockPixels() failed ! error=%d", ret);
+				}
                 // save_frame(pFrameRGB, target_width, target_height, i);
                 fill_bitmap(&info, pixels, pFrameRGB);
+				AndroidBitmap_unlockPixels(env, bitmap);
                 i = 1;
+				//TODO callback refresh
+				if(mClass == NULL || mObject == NULL || refresh == NULL) {
+					int res = registerCallBack(env);
+					LOGI(10,"registerCallBack == %d", res);	
+					if(res != 0) {
+						return decode_next_frame;
+					}
+				}
+				(*env)->CallVoidMethod(env, mObject, refresh);
     	    }
-        }
-        av_free_packet(&packet);
-	return decode_next_frame;
+        } else if(packet.stream_index==audioStream) {
+			//LOGI(10,"audio --------");	
+			int len1, audio_size;
+		}else {
+			av_free_packet(&packet);
+		}
+	//return decode_next_frame;
     }
-
-   AndroidBitmap_unlockPixels(env, bitmap);
+   //AndroidBitmap_unlockPixels(env, bitmap);
    LOGI(10,"exit\n");
    return stream_read_over;
 }
@@ -362,7 +356,9 @@ JNIEXPORT void JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_close(JNIEnv *
     /*close the video codec*/
     avcodec_close(pCodecCtx);
     /*close the video file*/
-    av_close_input_file(pFormatCtx);	
+    av_close_input_file(pFormatCtx);
+
+	unRegisterCallBack(pEnv);	
 }
 
 JNIEXPORT void JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_init(JNIEnv *pEnv, jobject pObj, jstring pFileName) {
@@ -389,6 +385,57 @@ JNIEXPORT jstring JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_videoFormat
 }
 
 
+void packet_queue_init(PacketQueue *q) {
+
+}
+
+int registerCallBack(JNIEnv *env) {
+	if(mClass == NULL) {
+		mClass = (*env)->FindClass(env, "com/sky/drovik/player/media/MovieView");
+		if(mClass == NULL){
+			return -1;
+		}
+		LOGI(10,"register local class OK.");
+	}
+	if (mObject == NULL) {
+		if (GetProviderInstance(env, mClass) != 1) {
+			(*env)->DeleteLocalRef(env, mClass);
+			return -1;
+		}
+		LOGI(10,"register local object OK.");
+	}
+	if(refresh == NULL) {
+		refresh = (*env)->GetMethodID(env, mClass, "callBackRefresh","()V");
+		if(refresh == NULL) {
+			(*env)->DeleteLocalRef(env, mClass);
+			(*env)->DeleteLocalRef(env, mObject);
+			return -3;
+		}
+	}
+	return 0;
+}
+
+int GetProviderInstance(JNIEnv *env,jclass obj_class) {
+	jmethodID construction_id = (*env)->GetMethodID(env, obj_class,	"<init>", "()V");
+	if (construction_id == 0) {
+		return -1;
+	}
+	mObject = (*env)->NewObject(env, obj_class, construction_id);
+	if (mObject == NULL) {
+		return -2;
+	}
+	return 1;
+}
+
+void unRegisterCallBack(JNIEnv *env) {
+	if(mClass) {
+		//(*env)->DeleteLocalRef(env, mClass);
+	}
+	if(mObject) {
+		//(*env)->DeleteLocalRef(env, mObject);
+	}
+	LOGI(10,"unregister native OK.");
+}
 
 
 

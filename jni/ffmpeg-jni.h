@@ -21,6 +21,28 @@
 #include <libavcodec/opt.h>
 #include <libavcodec/avfft.h>
 
+static uint8_t audio_buf[(AVCODEC_MAX_AUDIO_FRAME_SIZE * 3) / 2];
+
+char *gFileName;	  //the file name of the video
+uint8_t *buffer;
+AVFormatContext *gFormatCtx;
+int gVideoStreamIndex;    //video stream index
+
+AVCodecContext *gVideoCodecCtx;
+AVCodecContext *aCodecCtx;
+AVCodec *aCodec;
+/* Cheat to keep things simple and just use some globals. */
+AVFormatContext *pFormatCtx;
+AVCodecContext *pCodecCtx;
+AVFrame *pFrame;
+AVFrame *pFrameRGB;
+int videoStream;
+int audioStream;
+
+jclass mClass = NULL;
+jobject mObject = NULL;
+jmethodID refresh = NULL;
+
 enum {
 	open_file_fail = -1,
 	open_file_success = 0,
@@ -36,3 +58,18 @@ enum {
 	stream_read_over = -1
 };
 
+typedef struct PacketQueue {
+	AVPacketList *first_pkt, *last_pkt;
+	int nb_packets;
+	int size;
+	//SDL_mutex *mutex;
+	//SDL_cond *cond;
+} PacketQueue;
+
+void packet_queue_init(PacketQueue *q);
+
+//注册回调函数
+int registerCallBack(JNIEnv *env);
+int GetProviderInstance(JNIEnv *env, jclass obj_class);
+//解除回调函数
+void unregisterCallBack(JNIEnv *env);
