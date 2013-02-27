@@ -39,6 +39,7 @@ static void fill_bitmap(AndroidBitmapInfo*  info, void *pixels, AVFrame *pFrame)
     }
 }
 
+
 JNIEXPORT int JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(JNIEnv * env, jobject this,jstring name) { int ret;
     int err;
     int i;
@@ -111,10 +112,10 @@ JNIEXPORT int JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(J
     buffer=(uint8_t *)av_malloc(numBytes*sizeof(uint8_t));
 
     avpicture_fill((AVPicture *)pFrameRGB, buffer, PIX_FMT_RGB24, pCodecCtx->width, pCodecCtx->height);
-	PacketQueue audioq;
 	packet_queue_init(&audioq);
   return  open_file_success;
 }
+
 
 int Java_com_sky_drovik_player_ffmpeg_JniUtils_drawFrame(JNIEnv * env, jobject this, jstring bitmap)
 {
@@ -129,6 +130,15 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_drawFrame(JNIEnv * env, jobject t
     static struct SwsContext *img_convert_ctx;
     int64_t seek_target;
 
+	/*****/
+	uint8_t *pktdata;  
+    int pktsize;  
+    int out_size = AVCODEC_MAX_AUDIO_FRAME_SIZE*100;  
+    int16_t * inbuf = (int16_t *)av_malloc(out_size);  
+    FILE* pcm;  
+    pcm = fopen("/mnt/sdcard/result.pcm","wb");  
+
+	
     if ((ret = AndroidBitmap_getInfo(env, bitmap, &info)) < 0) {
         LOGE(1,"AndroidBitmap_getInfo() failed ! error=%d", ret);
         return bitmap_getinfo_error;
@@ -137,6 +147,9 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_drawFrame(JNIEnv * env, jobject t
     i = 0;
     while((av_read_frame(pFormatCtx, &packet)>=0)) {
   		if(packet.stream_index==videoStream) {
+			if ((ret = AndroidBitmap_lockPixels(env, bitmap, &pixels)) < 0) {
+				LOGE(1,"AndroidBitmap_lockPixels() failed ! error=%d", ret);
+			}
             avcodec_decode_video2(pCodecCtx, pFrame, &frameFinished, &packet);
     		if(frameFinished) {
                 //LOGE(1,"packet pts %llu", packet.pts);
@@ -155,9 +168,7 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_drawFrame(JNIEnv * env, jobject t
                     return initialize_conversion_error;
                 }
                 sws_scale(img_convert_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, pCodecCtx->height, pFrameRGB->data, pFrameRGB->linesize);
-				if ((ret = AndroidBitmap_lockPixels(env, bitmap, &pixels)) < 0) {
-					LOGE(1,"AndroidBitmap_lockPixels() failed ! error=%d", ret);
-				}
+				
                 // save_frame(pFrameRGB, target_width, target_height, i);
                 fill_bitmap(&info, pixels, pFrameRGB);
 				AndroidBitmap_unlockPixels(env, bitmap);
@@ -174,12 +185,40 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_drawFrame(JNIEnv * env, jobject t
     	    }
         } else if(packet.stream_index==audioStream) {
 			//LOGI(10,"audio --------");	
-			int len1, audio_size;
+			//int len1, audio_size;
+			//packet_queue_put(&audioq, &packet);
+			pktdata = packet.data;  
+            pktsize = packet.size;
+			while(pktsize>0)  
+            { 
+                out_size = AVCODEC_MAX_AUDIO_FRAME_SIZE*100;  
+                //½âÂë   avcodec_decode_audio2
+				//int len = 0;
+				//int len = avcodec_decode_audio2(aCodecCtx, (int16_t *)inbuf, &out_size,
+			//pktdata, pktsize);
+                int len = avcodec_decode_audio3(aCodecCtx, inbuf, &out_size, &packet);  
+                if (len < 0)  
+                {  
+                    //printf("Error while decoding.\n");  
+					LOGI(10,"Error while decoding.");	
+                    break;  
+                }  
+                if(out_size > 0)  
+                {  
+                    fwrite(inbuf,1,out_size,pcm);//pcm¼ÇÂ¼   
+                    fflush(pcm);  
+                }  
+                pktsize -= len;  
+                pktdata += len;  
+            } 
 		}else {
 			av_free_packet(&packet);
 		}
 	//return decode_next_frame;
     }
+	av_free(inbuf);  
+    fclose(pcm);  
+
    //AndroidBitmap_unlockPixels(env, bitmap);
    LOGI(10,"exit\n");
    return stream_read_over;
@@ -280,6 +319,11 @@ void Java_com_iped_ffmpeg_test_Main_drawFrameAt(JNIEnv * env, jobject this, jstr
 */
 static void get_video_info(char *prFilename);
 
+
+void packet_queue_init(PacketQueue *q) {
+	memset(q, 0, sizeof(PacketQueue));
+}
+
 /*parsing the video file, done by parse thread*/
 static void get_video_info(char *prFilename) {
     AVCodec *lVideoCodec;
@@ -343,6 +387,8 @@ static void get_video_info(char *prFilename) {
     LOGI(10, "get video info ends");
 }
 
+/*----------------------*/
+
 JNIEXPORT void JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_close(JNIEnv *pEnv, jobject pObj) {
 
     /* close the RGB image */
@@ -384,10 +430,6 @@ JNIEXPORT jstring JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_videoFormat
     return (*pEnv)->NewStringUTF(pEnv, lFormatName);
 }
 
-
-void packet_queue_init(PacketQueue *q) {
-
-}
 
 int registerCallBack(JNIEnv *env) {
 	if(mClass == NULL) {
@@ -437,6 +479,57 @@ void unRegisterCallBack(JNIEnv *env) {
 	LOGI(10,"unregister native OK.");
 }
 
+int packet_queue_put(PacketQueue *q, AVPacket *pkt){
+	AVPacketList *pkt1;
+	if(av_dup_packet(pkt) < 0) {
+		return -1;
+	}
+	pkt1 = av_malloc(sizeof(AVPacketList));
+	if (!pkt1)
+		return -1;
+	pkt1->pkt = *pkt;
+	pkt1->next = NULL;
+	//SDL_LockMutex(q->mutex);
+	if (!q->last_pkt)
+		q->first_pkt = pkt1;
+	else
+		q->last_pkt->next = pkt1;
+	q->last_pkt = pkt1;
+	q->nb_packets++;
+	q->size += pkt1->pkt.size;
+	//SDL_CondSignal(q->cond);
+	//SDL_UnlockMutex(q->mutex);
+	return 0;
+}
 
-
+static int packet_queue_get(PacketQueue *q, AVPacket *pkt, int block) {
+	AVPacketList *pkt1;
+	int ret;
+	//SDL_LockMutex(q->mutex);
+	for(;;) {
+		if(quit) {
+			ret = -1;
+			break;
+		}
+		pkt1 = q->first_pkt;
+		if (pkt1) {
+			q->first_pkt = pkt1->next;
+			if (!q->first_pkt)
+				q->last_pkt = NULL;
+				q->nb_packets--;
+				q->size -= pkt1->pkt.size;
+				*pkt = pkt1->pkt;
+				av_free(pkt1);
+				ret = 1;
+				break;
+		} else if (!block) {
+			ret = 0;
+			break;
+		} else {
+			//SDL_CondWait(q->cond, q->mutex);
+		}
+	}
+	//SDL_UnlockMutex(q->mutex);
+	return ret;
+}
 

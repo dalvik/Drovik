@@ -21,6 +21,14 @@
 #include <libavcodec/opt.h>
 #include <libavcodec/avfft.h>
 
+typedef struct PacketQueue {
+	AVPacketList *first_pkt, *last_pkt;
+	int nb_packets;
+	int size;
+	//SDL_mutex *mutex;
+	//SDL_cond *cond;
+} PacketQueue;
+
 static uint8_t audio_buf[(AVCODEC_MAX_AUDIO_FRAME_SIZE * 3) / 2];
 
 char *gFileName;	  //the file name of the video
@@ -39,9 +47,13 @@ AVFrame *pFrameRGB;
 int videoStream;
 int audioStream;
 
+PacketQueue audioq;
+int quit = 0;
+	
 jclass mClass = NULL;
 jobject mObject = NULL;
 jmethodID refresh = NULL;
+
 
 enum {
 	open_file_fail = -1,
@@ -58,15 +70,9 @@ enum {
 	stream_read_over = -1
 };
 
-typedef struct PacketQueue {
-	AVPacketList *first_pkt, *last_pkt;
-	int nb_packets;
-	int size;
-	//SDL_mutex *mutex;
-	//SDL_cond *cond;
-} PacketQueue;
 
 void packet_queue_init(PacketQueue *q);
+int packet_queue_put(PacketQueue *q, AVPacket *pkt);
 
 //×¢²á»Øµ÷º¯Êý
 int registerCallBack(JNIEnv *env);
