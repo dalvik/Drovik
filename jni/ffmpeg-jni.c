@@ -113,6 +113,10 @@ JNIEXPORT int JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(J
 
     avpicture_fill((AVPicture *)pFrameRGB, buffer, PIX_FMT_RGB24, pCodecCtx->width, pCodecCtx->height);
 	packet_queue_init(&audioq);
+	LOGI(1,"audio info rate = %d", aCodecCtx->sample_rate);
+	LOGI(1,"audio info channel = %d", aCodecCtx->channels);
+	LOGI(1,"audio info sample_fmt = %d,  %d", aCodecCtx->sample_fmt, AV_SAMPLE_FMT_FLT);
+	LOGI(1,"audio info frame_size = %d", aCodecCtx->frame_size);
   return  open_file_success;
 }
 
@@ -138,6 +142,51 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_drawFrame(JNIEnv * env, jobject t
     FILE* pcm;  
     pcm = fopen("/mnt/sdcard/result.pcm","wb");  
 
+	//register jni play audio
+	jobject audio_track;
+	jbyteArray buffer;
+	jclass audio_track_cls;
+	jmethodID min_buff_size_id;
+	jint buffer_size;
+	jmethodID method_write;
+
+	audio_track_cls = (*env)->FindClass(env,"android/media/AudioTrack");
+	min_buff_size_id = (*env)->GetStaticMethodID(
+										 env,
+										 audio_track_cls,
+										"getMinBufferSize",
+										"(III)I");
+	buffer_size = (*env)->CallStaticIntMethod(env,audio_track_cls,min_buff_size_id,
+			    11025,
+			    2,			/*CHANNEL_CONFIGURATION_MONO*/
+				2);         /*ENCODING_PCM_16BIT*/
+	LOGI(1,"buffer_size=%i",buffer_size);			
+	buffer = (*env)->NewByteArray(env,buffer_size/4);
+	char buf[buffer_size/4];
+
+	jmethodID constructor_id = (*env)->GetMethodID(env,audio_track_cls, "<init>",
+			"(IIIIII)V");
+	audio_track = (*env)->NewObject(env,audio_track_cls,
+			constructor_id,
+			3, 			  /*AudioManager.STREAM_MUSIC*/
+			11025,        /*sampleRateInHz*/
+			2,			  /*CHANNEL_CONFIGURATION_MONO*/
+			2,			  /*ENCODING_PCM_16BIT*/
+			buffer_size,  /*bufferSizeInBytes*/
+			1			  /*AudioTrack.MODE_STREAM*/
+	);
+	
+	//setvolume
+	LOGI(1,"setStereoVolume 1");
+	jmethodID setStereoVolume = (*env)->GetMethodID(env,audio_track_cls,"setStereoVolume","(FF)I");
+	(*env)->CallIntMethod(env,audio_track,setStereoVolume,1.0,1.0);
+	LOGI(1,"setStereoVolume 2");
+	//play
+    jmethodID method_play = (*env)->GetMethodID(env,audio_track_cls, "play",
+			"()V");
+    (*env)->CallVoidMethod(env,audio_track, method_play);
+	    //write
+    method_write = (*env)->GetMethodID(env,audio_track_cls,"write","([BII)I");
 	
     if ((ret = AndroidBitmap_getInfo(env, bitmap, &info)) < 0) {
         LOGE(1,"AndroidBitmap_getInfo() failed ! error=%d", ret);
@@ -190,12 +239,8 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_drawFrame(JNIEnv * env, jobject t
 			pktdata = packet.data;  
             pktsize = packet.size;
 			while(pktsize>0)  
-            { 
-                out_size = AVCODEC_MAX_AUDIO_FRAME_SIZE*100;  
-                //½âÂë   avcodec_decode_audio2
-				//int len = 0;
-				//int len = avcodec_decode_audio2(aCodecCtx, (int16_t *)inbuf, &out_size,
-			//pktdata, pktsize);
+            {  
+				//int len = avcodec_decode_audio2(aCodecCtx, (int16_t *)inbuf, &out_size,pktdata, pktsize);
                 int len = avcodec_decode_audio3(aCodecCtx, inbuf, &out_size, &packet);  
                 if (len < 0)  
                 {  
@@ -207,6 +252,8 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_drawFrame(JNIEnv * env, jobject t
                 {  
                     fwrite(inbuf,1,out_size,pcm);//pcm¼ÇÂ¼   
                     fflush(pcm);  
+					(*env)->SetByteArrayRegion(env,buffer, 0,len, (jbyte *)buf);
+					(*env)->CallVoidMethod(env,audio_track,method_write,buffer,0,len);
                 }  
                 pktsize -= len;  
                 pktdata += len;  
