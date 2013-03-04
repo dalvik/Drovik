@@ -29,7 +29,8 @@ typedef struct PacketQueue {
 	//SDL_cond *cond;
 } PacketQueue;
 
-static uint8_t audio_buf[(AVCODEC_MAX_AUDIO_FRAME_SIZE * 3) / 2];
+uint8_t audio_buf[(AVCODEC_MAX_AUDIO_FRAME_SIZE * 3) / 2];
+int frequency = 44100;
 
 char *gFileName;	  //the file name of the video
 uint8_t *buffer;
