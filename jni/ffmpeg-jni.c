@@ -40,28 +40,25 @@ static void fill_bitmap(AndroidBitmapInfo*  info, void *pixels, AVFrame *pFrame)
 }
 
 
-JNIEXPORT int JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(JNIEnv * env, jobject this,jstring name) { int ret;
+JNIEXPORT int JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(JNIEnv * env, jobject this,jstring name, jint d) { 
+	int ret;
+	debug = d;
     int err;
     int i;
     AVCodec *pCodec;
     int numBytes;
-
     av_register_all();
-    LOGI(10,"Registered formats");
     gFileName = (char *)(*env)->GetStringUTFChars(env, name, NULL);
     err = av_open_input_file(&pFormatCtx,gFileName , NULL, 0, NULL);
-    LOGI(10,"Called open file");
     if(err!=0) {
-        LOGI(10,"Couldn't open file");
+		if(debug) LOGI(10,"Couldn't open file");
         return open_file_fail;
     }
-    LOGI(10,"Opened file");
-    
     if(av_find_stream_info(pFormatCtx)<0) {
-        LOGI(10,"Unable to get stream info");
+		if(debug) LOGI(10,"Unable to get stream info");
         return get_stream_info_fail;
     }
-    
+
     videoStream = -1;
     audioStream = -1;
     for (i=0; i<pFormatCtx->nb_streams; i++) {
@@ -73,55 +70,50 @@ JNIEXPORT int JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(J
 		}
     }
     if(videoStream==-1) {
-        LOGE(1,"Unable to find video stream");
+		if(debug) LOGE(1,"Unable to find video stream");
         return find_video_stream_fail;
     }
     
     if(audioStream==-1) {
-        LOGE(1,"Unable to find audio stream");
+		if(debug) LOGE(1,"Unable to find audio stream");
         return find_audio_stream_fail;
     }
     pCodecCtx=pFormatCtx->streams[videoStream]->codec;
-    
     pCodec=avcodec_find_decoder(pCodecCtx->codec_id);
     if(pCodec==NULL) {
-        LOGE(1,"Unsupported codec");
+		if(debug) LOGE(1,"Unsupported codec");
         return unsurpport_codec;
     }
     if(avcodec_open(pCodecCtx, pCodec)<0) {
-        LOGE(1,"Unable to open codec");
+		if(debug) 
+			LOGE(1,"Unable to open codec");
         return open_codec_fail;
     }
     
 	aCodecCtx=pFormatCtx->streams[audioStream]->codec;   
 	aCodec = avcodec_find_decoder(aCodecCtx->codec_id);
 	if(!aCodec) {
-		LOGE(1,"Unsupported audio codec!");
+		if(debug)  LOGE(1,"Unsupported audio codec!");
 		return unsurpport_codec;
 	}
 	if(avcodec_open(aCodecCtx, aCodec)<0){
-        LOGE(1,"Unable to open audio codec");
+        if(debug)  LOGE(1,"Unable to open audio codec");
 		return open_codec_fail;
 	}
     pFrame=avcodec_alloc_frame();
     pFrameRGB=avcodec_alloc_frame();
-    LOGI(10,"Video size is [%d x %d]", pCodecCtx->width, pCodecCtx->height);
-    //LOGI(10,"Video during = %d", pFormatCtx-);
-
+    if(debug) LOGI(10,"Video size is [%d x %d]", pCodecCtx->width, pCodecCtx->height);
     numBytes=avpicture_get_size(PIX_FMT_RGB24, pCodecCtx->width, pCodecCtx->height);
     buffer=(uint8_t *)av_malloc(numBytes*sizeof(uint8_t));
 
     avpicture_fill((AVPicture *)pFrameRGB, buffer, PIX_FMT_RGB24, pCodecCtx->width, pCodecCtx->height);
-	packet_queue_init(&audioq);
-	LOGI(1,"audio info rate = %d", aCodecCtx->sample_rate);
-	LOGI(1,"audio info channel = %d", aCodecCtx->channels);
-	LOGI(1,"audio info sample_fmt = %d,  %d", aCodecCtx->sample_fmt, AV_SAMPLE_FMT_FLT);
-	LOGI(1,"audio info frame_size = %d", aCodecCtx->frame_size);
-  return  open_file_success;
+	if(debug) LOGI(1,"audio rate = %d, channel = %d, sample_fmt = %d, frame_size = %d", aCodecCtx->sample_rate, aCodecCtx->channels, aCodecCtx->sample_fmt, aCodecCtx->frame_size);
+	(*env)->GetJavaVM(env, &j_env);
+	j_obj = (*env)->NewGlobalRef(env,j_obj);
+	return  open_file_success;
 }
 
-
-int Java_com_sky_drovik_player_ffmpeg_JniUtils_drawFrame(JNIEnv * env, jobject this, jstring bitmap)
+int Java_com_sky_drovik_player_ffmpeg_JniUtils_decodeMedia(JNIEnv * env, jobject this, jstring bitmap)
 {
     AndroidBitmapInfo  info;
     void*              pixels;
@@ -139,8 +131,8 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_drawFrame(JNIEnv * env, jobject t
     int pktsize;  
     int out_size = AVCODEC_MAX_AUDIO_FRAME_SIZE*10;  
     int16_t * inbuf = (int16_t *)av_malloc(out_size);  
-    FILE* pcm;  
-    pcm = fopen("/mnt/sdcard/result.wav","wb");  
+    //FILE* pcm;  
+    //pcm = fopen("/mnt/sdcard/result.wav","wb");  
 
 	//register jni play audio
 	jobject audio_track;
@@ -152,9 +144,7 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_drawFrame(JNIEnv * env, jobject t
 	jmethodID method_release;
 	
 	audio_track_cls = (*env)->FindClass(env,"android/media/AudioTrack");
-	min_buff_size_id = (*env)->GetStaticMethodID(
-										 env,
-										 audio_track_cls,
+	min_buff_size_id = (*env)->GetStaticMethodID(env,audio_track_cls,
 										"getMinBufferSize",
 										"(III)I");
 	buffer_size = (*env)->CallStaticIntMethod(env,audio_track_cls,min_buff_size_id,
@@ -234,41 +224,26 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_drawFrame(JNIEnv * env, jobject t
 				(*env)->CallVoidMethod(env, mObject, refresh);
     	    }
         } else if(packet.stream_index == audioStream) {
-			//LOGI(10,"audio --------");	
-			//int len1, audio_size;
-			//packet_queue_put(&audioq, &packet);
-			pktdata = packet.data;  
-            pktsize = packet.size;
-			while(pktsize>0)  
-            {  
-				out_size = AVCODEC_MAX_AUDIO_FRAME_SIZE*10;
-				//int len = avcodec_decode_audio2(aCodecCtx, (int16_t *)inbuf, &out_size,pktdata, pktsize);
-                int len = avcodec_decode_audio3(aCodecCtx, inbuf, &out_size, &packet);  
-                if (len < 0)  
-                {  
-                    //printf("Error while decoding.\n");  
-					LOGI(10,"Error while decoding. %d", len);	
-                    break;  
-                }  
-                if(out_size > 0)  
-                {  
-                    fwrite(inbuf,1,out_size,pcm);//pcm¼ÇÂ¼   
-                    fflush(pcm);  
-					(*env)->SetByteArrayRegion(env,output_buffer, 0,out_size, (jbyte *)inbuf);
-					//LOGI(10,"decoding. %d" ,len);	
-					(*env)->CallIntMethod(env,audio_track,method_write,output_buffer,0,out_size);
-					
-                }  
-                pktsize -= len;  
-                pktdata += len;  
-            } 
+			out_size = AVCODEC_MAX_AUDIO_FRAME_SIZE*10;
+			//int len = avcodec_decode_audio2(aCodecCtx, (int16_t *)inbuf, &out_size,pktdata, pktsize);
+			int len = avcodec_decode_audio3(aCodecCtx, inbuf, &out_size, &packet);  
+			if (len < 0)  
+			{  
+				//printf("Error while decoding.\n");  
+				LOGI(10,"Error while decoding. %d", len);	
+				break;  
+			}  
+			//fwrite(inbuf,1,out_size,pcm);//pcm¼ÇÂ¼   
+			//fflush(pcm);  
+			(*env)->SetByteArrayRegion(env,output_buffer, 0,out_size, (jbyte *)inbuf);
+			(*env)->CallIntMethod(env,audio_track,method_write,output_buffer,0,out_size);
 		}else {
 			av_free_packet(&packet);
 		}
 	//return decode_next_frame;
     }
 	av_free(inbuf);  
-    fclose(pcm);  
+   // fclose(pcm);  
 	(*env)->CallVoidMethod(env,audio_track, method_release);
    //AndroidBitmap_unlockPixels(env, bitmap);
    LOGI(10,"exit\n");
