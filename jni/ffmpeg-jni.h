@@ -21,6 +21,14 @@
 #include <libavcodec/opt.h>
 #include <libavcodec/avfft.h>
 
+#include <pthread.h>
+
+const int MAX_AUDIOQ_SIZE = 5 * 6 * 1024;
+const int MAX_VIDEOQ_SIZE = 5 * 256 * 1024;
+
+//int  VIDEO_PICTURE_QUEUE_SIZE = 5;
+#define VIDEO_PICTURE_QUEUE_SIZE 1
+
 typedef struct PacketQueue {
 	AVPacketList *first_pkt, *last_pkt;
 	int nb_packets;
@@ -29,9 +37,53 @@ typedef struct PacketQueue {
 	//SDL_cond *cond;
 } PacketQueue;
 
+typedef struct VideoPicture {
+
+	//SDL_Overlay *bmp;
+
+	int width, height;
+
+	int allocated;
+
+} VideoPicture;
+
+
+typedef struct VideoState {
+  AVFormatContext *pFormatCtx;
+  int             videoStream, audioStream;
+  double          audio_clock;
+  AVStream        *audio_st;
+  PacketQueue     audioq;
+  uint8_t         audio_buf[(AVCODEC_MAX_AUDIO_FRAME_SIZE * 3) / 2];
+  unsigned int    audio_buf_size;
+  unsigned int    audio_buf_index;
+  AVPacket        audio_pkt;
+  uint8_t         *audio_pkt_data;
+  int             audio_pkt_size;
+  int             audio_hw_buf_size;
+  double          frame_timer;
+  double          frame_last_pts;
+  double          frame_last_delay;
+  double          video_clock;
+  AVStream        *video_st;
+  PacketQueue     videoq;
+  VideoPicture    pictq[VIDEO_PICTURE_QUEUE_SIZE];
+  int             pictq_size, pictq_rindex, pictq_windex;
+  //SDL_mutex       *pictq_mutex;
+  //SDL_cond        *pictq_cond;
+  //SDL_Thread      *parse_tid;
+  //SDL_Thread      *video_tid;
+  int 				video_tid;
+  char            filename[1024];
+  int             quit;
+  struct SwsContext *img_convert_ctx;
+} VideoState;
+
+uint64_t global_video_pkt_pts = AV_NOPTS_VALUE;
+
 int debug = 0;
-JNIEnv *j_env;
-jobject j_obj; 
+JavaVM  *g_jvm;
+jobject g_obj; 
 int frequency = 44100;
 
 char *gFileName;	  //the file name of the video
@@ -47,11 +99,17 @@ AVFormatContext *pFormatCtx;
 AVCodecContext *pCodecCtx;
 AVFrame *pFrame;
 AVFrame *pFrameRGB;
-int videoStream;
-int audioStream;
 
-PacketQueue audioq;
-int quit = 0;
+// 音频包队列
+//PacketQueue audioq;
+
+// 视频包队列
+///PacketQueue videoq;
+
+VideoState    *is;
+   
+// 程序退出标记 1 不退出
+//int quit = 1;
 	
 jclass mClass = NULL;
 jobject mObject = NULL;
@@ -73,6 +131,9 @@ enum {
 	stream_read_over = -1
 };
 
+int stream_component_open(VideoState *is, int stream_index);
+int decode_thread(void *arg);
+int video_thread(void *arg);
 
 void packet_queue_init(PacketQueue *q);
 int packet_queue_put(PacketQueue *q, AVPacket *pkt);
