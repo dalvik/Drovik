@@ -29,6 +29,12 @@ const int MAX_VIDEOQ_SIZE = 5 * 256 * 1024;
 //int  VIDEO_PICTURE_QUEUE_SIZE = 5;
 #define VIDEO_PICTURE_QUEUE_SIZE 1
 
+#ifdef WIN32
+typedef  CRITICAL_SECTION ffmpeg_lock_t;
+#else
+typedef  pthread_mutex_t  ffmpeg_lock_t;
+#endif
+
 typedef struct PacketQueue {
 	AVPacketList *first_pkt, *last_pkt;
 	int nb_packets;
@@ -73,10 +79,12 @@ typedef struct VideoState {
   //SDL_cond        *pictq_cond;
   //SDL_Thread      *parse_tid;
   //SDL_Thread      *video_tid;
+  int 				decode_tid;
   int 				video_tid;
   char            filename[1024];
   int             quit;
   struct SwsContext *img_convert_ctx;
+  ffmpeg_lock_t 	lock;
 } VideoState;
 
 uint64_t global_video_pkt_pts = AV_NOPTS_VALUE;
@@ -108,7 +116,7 @@ AVFrame *pFrameRGB;
 
 VideoState    *is;
    
-// 程序退出标记 1 不退出
+// 程序退出标记 1 退出
 //int quit = 1;
 	
 jclass mClass = NULL;
@@ -132,8 +140,8 @@ enum {
 };
 
 int stream_component_open(VideoState *is, int stream_index);
-int decode_thread(void *arg);
-int video_thread(void *arg);
+void *decode_thread(void *arg);
+void *video_thread(void *arg);
 
 void packet_queue_init(PacketQueue *q);
 int packet_queue_put(PacketQueue *q, AVPacket *pkt);
@@ -143,3 +151,9 @@ int registerCallBack(JNIEnv *env);
 int GetProviderInstance(JNIEnv *env, jclass obj_class);
 //解除回调函数
 void unregisterCallBack(JNIEnv *env);
+
+//lock
+void ffmpeg_lock_init(ffmpeg_lock_t *lock);
+void ffmpeg_lock_enter(ffmpeg_lock_t *lock);
+void ffmpeg_lock_leave(ffmpeg_lock_t *lock);
+void ffmpeg_lock_destroy(ffmpeg_lock_t *lock);

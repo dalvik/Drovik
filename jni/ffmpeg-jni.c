@@ -43,9 +43,11 @@ static int packet_queue_get(PacketQueue *q, AVPacket *pkt, int block) {
 	AVPacketList *pkt1;
 	int ret;
 	//SDL_LockMutex(q->mutex);
+	ffmpeg_lock_enter(&is->lock);
 	for(;;) {
 		if(is->quit) {
 			ret = -1;
+			if(debug) LOGI(10,"packet_queue_get  quit!");
 			break;
 		}
 		pkt1 = q->first_pkt;
@@ -67,6 +69,7 @@ static int packet_queue_get(PacketQueue *q, AVPacket *pkt, int block) {
 		}
 	}
 	//SDL_UnlockMutex(q->mutex);
+	ffmpeg_lock_leave(&is->lock);
 	return ret;
 }
 
@@ -104,6 +107,7 @@ JNIEXPORT int JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(J
     }
 	
     if(videoStream>=0) {
+		ffmpeg_lock_init(&is->lock);
 		pCodecCtx=pFormatCtx->streams[videoStream]->codec;
 		pCodec=avcodec_find_decoder(pCodecCtx->codec_id);
 		if(!pCodec) {
@@ -119,9 +123,7 @@ JNIEXPORT int JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(J
 				is->frame_timer = (double)av_gettime() / 1000000.0;
 				is->frame_last_delay = 40e-3;
 				packet_queue_init(&is->videoq);
-				is->quit = 1;
-				pthread_t pt;
-				is->video_tid =  pthread_create(&pt, NULL, &decode_thread, is);
+				is->quit = 0; //1 exit
 			}
 		}
     }
@@ -140,7 +142,7 @@ JNIEXPORT int JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(J
 				is->audio_st = pFormatCtx->streams[audioStream];
 				is->audio_buf_size = 0;
 				is->audio_buf_index = 0;
-				is->quit = 1;
+				is->quit = 0;
 				memset(&is->audio_pkt, 0, sizeof(is->audio_pkt));
 				packet_queue_init(&is->audioq);
 			}
@@ -150,12 +152,19 @@ JNIEXPORT int JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(J
 		LOGI(10, "%s: could not open codecs", gFileName);
 		return open_file_fail;
 	}	
+	pthread_t decode;
+	is->decode_tid =  pthread_create(&decode, NULL, &decode_thread, is);
+	if(debug)  LOGE(1,"pthread_create  decode_thread");
+	pthread_t video;
+	is->video_tid =  pthread_create(&video, NULL, &video_thread, is);
+	if(debug)  LOGE(1,"pthread_create  video_thread");
 	
 	if(debug) LOGI(1,"audio rate = %d, channel = %d, sample_fmt = %d, frame_size = %d", aCodecCtx->sample_rate, aCodecCtx->channels, aCodecCtx->sample_fmt, aCodecCtx->frame_size);
 	//if(!is->video_tid) {
 	//	av_free(is);
 	//	return open_codec_fail;
 	//}
+	
 	return  open_file_success;
 }
 
@@ -229,29 +238,32 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_decodeMedia(JNIEnv * env, jobject
     //stream_read_over;
 }
 
-int decode_thread(void *arg) {
+void *decode_thread(void *arg) {
 	JNIEnv *env;
 	if((*g_jvm)->AttachCurrentThread(g_jvm, &env, NULL) != JNI_OK) {
 		return -1;
 	}
 	VideoState *is = (VideoState*)arg;
     AVPacket packet;
-    while(is->quit) {
+    while(!is->quit) {
 		LOGI(10, "### audioq size = %d, videoq size = %d", is->audioq.size, is->videoq.size);
  		if(is->audioq.size > MAX_AUDIOQ_SIZE || is->videoq.size > MAX_VIDEOQ_SIZE) {
-		   usleep(100);
+		   LOGI(10, "### 1111");
+		   usleep(500000); //50 ms
 		   continue;
 		}
 		if(av_read_frame(is->pFormatCtx, &packet)<0){
 			if(url_ferror(&pFormatCtx->pb) == 0) {
-				usleep(100);
+			LOGI(10, "### 222");
+				usleep(500000);
 				continue;
 			}else{
-				is->quit = 0;
+				is->quit = 1;
 				break;
 			}
 		}
   		if(packet.stream_index==is->videoStream) {
+		LOGI(10, "### 3333");
 			packet_queue_put(&is->videoq, &packet);
 			/**************************/
 			/*
@@ -282,23 +294,31 @@ int decode_thread(void *arg) {
 				(*env)->CallVoidMethod(env, mObject, refresh);
     	    }*/
         } else if(packet.stream_index==is->audioStream) {
+		LOGI(10, "### 4444");
 			packet_queue_put(&is->audioq, &packet);
 		} else {
+		LOGI(10, "### 55555");
 			av_free_packet(&packet);
 		}
-		
+		LOGI(10, "### 6666");
     }
+	LOGI(10, "### 7777");
 	LOGI(10,"exit\n");
-	return 0;
+	return ((void *)0);
 }
 
-int video_thread(void *arg) {
+void *video_thread(void *arg) {
+  JNIEnv *env;
+  if((*g_jvm)->AttachCurrentThread(g_jvm, &env, NULL) != JNI_OK) {
+	  return ((void *)-1);
+  }
   VideoState *is = (VideoState*)arg;
   AVPacket pkt1, *packet = &pkt1;
   int len1, frameFinished;
   AVFrame *pFrame;
   double pts;
-  			
+  pFrame=avcodec_alloc_frame();
+  /*			
   int numBytes;
   pFrame=avcodec_alloc_frame();
   pFrameRGB=avcodec_alloc_frame();
@@ -306,11 +326,14 @@ int video_thread(void *arg) {
   numBytes=avpicture_get_size(PIX_FMT_RGB24, pCodecCtx->width, pCodecCtx->height);
   buffer=(uint8_t *)av_malloc(numBytes*sizeof(uint8_t));
   avpicture_fill((AVPicture *)pFrameRGB, buffer, PIX_FMT_RGB24, pCodecCtx->width, pCodecCtx->height);
-
+*/
   for(;;) {
     if(packet_queue_get(&is->videoq, packet, 1) < 0) {
+		if(debug) LOGI(10,"video_thread get packet");
       break;
     }
+	if(debug) LOGI(10,"video_thread get packet ====================");
+	usleep(1000000);
     pts = 0;
     global_video_pkt_pts = packet->pts;
     len1 = avcodec_decode_video2(is->video_st->codec,
@@ -335,11 +358,13 @@ int video_thread(void *arg) {
       // if (queue_picture(is, pFrame, pts) < 0) {
 	  //	break;
       // }
+	  usleep(1000000);
     }
     av_free_packet(packet);
   }
   av_free(pFrame);
-  return 0;
+  LOGI(10, "#### ------------ video_thread exit");
+  return ((void *)0);
 }
 
 JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_getVideoResolution(JNIEnv *pEnv, jobject pObj) {
@@ -602,14 +627,21 @@ void unRegisterCallBack(JNIEnv *env) {
 int packet_queue_put(PacketQueue *q, AVPacket *pkt){
 	AVPacketList *pkt1;
 	if(av_dup_packet(pkt) < 0) {
+		LOGI(10,"av_dup_packet < 0");
 		return -1;
 	}
+	LOGI(10, "### aaaa");
 	pkt1 = av_malloc(sizeof(AVPacketList));
-	if (!pkt1)
+	LOGI(10, "### aaaa -----");
+	if (!pkt1) {
+		LOGI(10, "### bbb");
 		return -1;
+	}
 	pkt1->pkt = *pkt;
 	pkt1->next = NULL;
 	//SDL_LockMutex(q->mutex);
+	LOGI(10, "### cccccc -----");
+	ffmpeg_lock_enter(&is->lock);
 	if (!q->last_pkt)
 		q->first_pkt = pkt1;
 	else
@@ -617,10 +649,47 @@ int packet_queue_put(PacketQueue *q, AVPacket *pkt){
 	q->last_pkt = pkt1;
 	q->nb_packets++;
 	q->size += pkt1->pkt.size;
+	LOGI(10, "### cccc");
+	ffmpeg_lock_leave(&is->lock);
 	//SDL_CondSignal(q->cond);
 	//SDL_UnlockMutex(q->mutex);
+	LOGI(10, "### dddd");
 	return 0;
 }
 
+void ffmpeg_lock_init(ffmpeg_lock_t *lock)
+{
+	#ifndef WIN32
+		pthread_mutex_init(lock, NULL);
+	#else
+		InitializeCriticalSection(lock);
+	#endif
+}
 
+void ffmpeg_lock_enter(ffmpeg_lock_t *lock)
+{
+	#ifndef WIN32
+		pthread_mutex_lock(lock);
+	#else
+		EnterCriticalSection(lock);
+	#endif
+}
+
+void ffmpeg_lock_leave(ffmpeg_lock_t *lock)
+{
+	#ifndef WIN32
+		pthread_mutex_unlock(lock);
+	#else
+		LeaveCriticalSection(lock);
+	#endif
+}
+
+void ffmpeg_lock_destroy(ffmpeg_lock_t *lock)
+{
+	#ifndef WIN32
+		pthread_mutex_destroy(lock);
+	#else
+		DeleteCriticalSection(lock);
+	#endif
+}
 
