@@ -35,6 +35,10 @@ typedef  CRITICAL_SECTION ffmpeg_lock_t;
 typedef  pthread_mutex_t  ffmpeg_lock_t;
 #endif
 
+
+pthread_mutex_t mut = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+  
 typedef struct PacketQueue {
 	AVPacketList *first_pkt, *last_pkt;
 	int nb_packets;
