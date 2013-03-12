@@ -43,7 +43,7 @@ static int packet_queue_get(PacketQueue *q, AVPacket *pkt, int block) {
 	AVPacketList *pkt1;
 	int ret;
 	//SDL_LockMutex(q->mutex);
-	ffmpeg_lock_enter(&is->lock);
+	pthread_mutex_lock(&mut);
 	for(;;) {
 		if(is->quit) {
 			ret = -1;
@@ -66,10 +66,12 @@ static int packet_queue_get(PacketQueue *q, AVPacket *pkt, int block) {
 			break;
 		} else {
 			//SDL_CondWait(q->cond, q->mutex);
+			if(debug) LOGI(10,"^^^^^^^^^^^^^^");
+			pthread_cond_wait(&cond, &mut);
 		}
 	}
 	//SDL_UnlockMutex(q->mutex);
-	ffmpeg_lock_leave(&is->lock);
+	pthread_mutex_unlock(&mut);
 	return ret;
 }
 
@@ -107,7 +109,6 @@ JNIEXPORT int JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(J
     }
 	
     if(videoStream>=0) {
-		ffmpeg_lock_init(&is->lock);
 		pCodecCtx=pFormatCtx->streams[videoStream]->codec;
 		pCodec=avcodec_find_decoder(pCodecCtx->codec_id);
 		if(!pCodec) {
@@ -248,14 +249,12 @@ void *decode_thread(void *arg) {
     while(!is->quit) {
 		LOGI(10, "### audioq size = %d, videoq size = %d", is->audioq.size, is->videoq.size);
  		if(is->audioq.size > MAX_AUDIOQ_SIZE || is->videoq.size > MAX_VIDEOQ_SIZE) {
-		   LOGI(10, "### 1111");
-		   usleep(500000); //50 ms
+		   usleep(50000); //50 ms
 		   continue;
 		}
 		if(av_read_frame(is->pFormatCtx, &packet)<0){
 			if(url_ferror(&pFormatCtx->pb) == 0) {
-			LOGI(10, "### 222");
-				usleep(500000);
+				usleep(50000);
 				continue;
 			}else{
 				is->quit = 1;
@@ -263,7 +262,6 @@ void *decode_thread(void *arg) {
 			}
 		}
   		if(packet.stream_index==is->videoStream) {
-		LOGI(10, "### 3333");
 			packet_queue_put(&is->videoq, &packet);
 			/**************************/
 			/*
@@ -294,15 +292,11 @@ void *decode_thread(void *arg) {
 				(*env)->CallVoidMethod(env, mObject, refresh);
     	    }*/
         } else if(packet.stream_index==is->audioStream) {
-		LOGI(10, "### 4444");
 			packet_queue_put(&is->audioq, &packet);
 		} else {
-		LOGI(10, "### 55555");
 			av_free_packet(&packet);
 		}
-		LOGI(10, "### 6666");
     }
-	LOGI(10, "### 7777");
 	LOGI(10,"exit\n");
 	return ((void *)0);
 }
@@ -317,8 +311,6 @@ void *video_thread(void *arg) {
   int len1, frameFinished;
   AVFrame *pFrame;
   double pts;
-  pFrame=avcodec_alloc_frame();
-  /*			
   int numBytes;
   pFrame=avcodec_alloc_frame();
   pFrameRGB=avcodec_alloc_frame();
@@ -326,20 +318,19 @@ void *video_thread(void *arg) {
   numBytes=avpicture_get_size(PIX_FMT_RGB24, pCodecCtx->width, pCodecCtx->height);
   buffer=(uint8_t *)av_malloc(numBytes*sizeof(uint8_t));
   avpicture_fill((AVPicture *)pFrameRGB, buffer, PIX_FMT_RGB24, pCodecCtx->width, pCodecCtx->height);
-*/
+
   for(;;) {
     if(packet_queue_get(&is->videoq, packet, 1) < 0) {
-		if(debug) LOGI(10,"video_thread get packet");
+		if(debug) LOGI(10,"video_thread get packet exit");
       break;
     }
-	if(debug) LOGI(10,"video_thread get packet ====================");
-	usleep(1000000);
     pts = 0;
-    global_video_pkt_pts = packet->pts;
-    len1 = avcodec_decode_video2(is->video_st->codec,
+    global_video_pkt_pts = packet->pts;//is->video_st->codec
+    len1 = avcodec_decode_video2(pCodecCtx,
 				pFrame,
 				&frameFinished,
 				&packet);
+	if(debug) LOGI(10,"video_thread get packet ====================%d", len1 );
     if(packet->dts == AV_NOPTS_VALUE
        && pFrame->opaque
        && *(uint64_t*)pFrame->opaque
@@ -358,7 +349,7 @@ void *video_thread(void *arg) {
       // if (queue_picture(is, pFrame, pts) < 0) {
 	  //	break;
       // }
-	  usleep(1000000);
+	  usleep(10000);
     }
     av_free_packet(packet);
   }
@@ -630,18 +621,14 @@ int packet_queue_put(PacketQueue *q, AVPacket *pkt){
 		LOGI(10,"av_dup_packet < 0");
 		return -1;
 	}
-	LOGI(10, "### aaaa");
 	pkt1 = av_malloc(sizeof(AVPacketList));
-	LOGI(10, "### aaaa -----");
 	if (!pkt1) {
-		LOGI(10, "### bbb");
 		return -1;
 	}
 	pkt1->pkt = *pkt;
 	pkt1->next = NULL;
 	//SDL_LockMutex(q->mutex);
-	LOGI(10, "### cccccc -----");
-	ffmpeg_lock_enter(&is->lock);
+	pthread_mutex_lock(&mut);
 	if (!q->last_pkt)
 		q->first_pkt = pkt1;
 	else
@@ -649,11 +636,10 @@ int packet_queue_put(PacketQueue *q, AVPacket *pkt){
 	q->last_pkt = pkt1;
 	q->nb_packets++;
 	q->size += pkt1->pkt.size;
-	LOGI(10, "### cccc");
-	ffmpeg_lock_leave(&is->lock);
+	pthread_cond_broadcast(&cond);//pthread_cond_signal
+	pthread_mutex_unlock(&mut);
 	//SDL_CondSignal(q->cond);
 	//SDL_UnlockMutex(q->mutex);
-	LOGI(10, "### dddd");
 	return 0;
 }
 
