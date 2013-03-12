@@ -43,7 +43,7 @@ static int packet_queue_get(PacketQueue *q, AVPacket *pkt, int block) {
 	AVPacketList *pkt1;
 	int ret;
 	//SDL_LockMutex(q->mutex);
-	pthread_mutex_lock(&mut);
+	pthread_mutex_lock(&q->mutex);
 	for(;;) {
 		if(is->quit) {
 			ret = -1;
@@ -67,11 +67,11 @@ static int packet_queue_get(PacketQueue *q, AVPacket *pkt, int block) {
 		} else {
 			//SDL_CondWait(q->cond, q->mutex);
 			if(debug) LOGI(10,"^^^^^^^^^^^^^^");
-			pthread_cond_wait(&cond, &mut);
+			pthread_cond_wait(&q->cond, &q->mutex);
 		}
 	}
 	//SDL_UnlockMutex(q->mutex);
-	pthread_mutex_unlock(&mut);
+	pthread_mutex_unlock(&q->mutex);
 	return ret;
 }
 
@@ -170,75 +170,6 @@ JNIEXPORT int JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(J
 	return  open_file_success;
 }
 
-int stream_component_open(VideoState *is, int stream_index) {
-  //AVFormatContext *pFormatCtx = is->pFormatCtx;
-  AVCodecContext *codecCtx;
-  AVCodec *codec;
-  int numBytes;
-  if(stream_index < 0 || stream_index >= pFormatCtx->nb_streams) {
-    return -1;
-  }
-
-	
-  if(debug) LOGI(10,"55555 stream_index= %d, %p", stream_index,pFormatCtx);
-  codecCtx = pFormatCtx->streams[stream_index]->codec;
-  //is->img_convert_ctx = sws_getContext(codecCtx->width,codecCtx->height,codecCtx->pix_fmt,codecCtx->width,codecCtx->height,PIX_FMT_RGB24,SWS_BICUBIC,NULL, NULL, NULL);
-
-  if(codecCtx->codec_type == AVMEDIA_TYPE_AUDIO) {
-  /*
-    wanted_spec.freq = codecCtx->sample_rate;
-    wanted_spec.format = AUDIO_S16SYS;
-    wanted_spec.channels = codecCtx->channels;
-    wanted_spec.silence = 0;
-    wanted_spec.samples = SDL_AUDIO_BUFFER_SIZE;
-    wanted_spec.callback = audio_callback;
-    wanted_spec.userdata = is;
- */
-    //is->audio_hw_buf_size = spec.size;
-  }
-  if(debug) LOGI(10,"6666");
-  codec = avcodec_find_decoder(codecCtx->codec_id);
-
-  if(!codec || (avcodec_open(codecCtx, codec)) < 0) {
-    if(debug) LOGE(1,"Unsupported codec");
-	av_free(is);
-    return -1;
-  }
-  /*
-  switch(codecCtx->codec_type) {
-  case AVMEDIA_TYPE_AUDIO:
-    is->audioStream = stream_index;
-    is->audio_st = pFormatCtx->streams[stream_index];
-    is->audio_buf_size = 0;
-    is->audio_buf_index = 0;
-    memset(&is->audio_pkt, 0, sizeof(is->audio_pkt));
-    packet_queue_init(&is->audioq);
-    //SDL_PauseAudio(0);
-    break;
-  case AVMEDIA_TYPE_VIDEO:
-    is->videoStream = stream_index;
-    is->video_st = pFormatCtx->streams[stream_index];
-    is->frame_timer = (double)av_gettime() / 1000000.0;
-    is->frame_last_delay = 40e-3;
-    packet_queue_init(&is->videoq);
-    //is->video_tid = SDL_CreateThread(video_thread, is);
-	pthread_t pt;
-	is->video_tid =  pthread_create(&pt, NULL, &decode_thread, is);
-    //codecCtx->get_buffer = our_get_buffer;
-    //codecCtx->release_buffer = our_release_buffer;
-    break;
-  default:
-    break;
-  }*/
-}
-
-int Java_com_sky_drovik_player_ffmpeg_JniUtils_decodeMedia(JNIEnv * env, jobject this, jstring bitmap)
-{
-
-	pthread_t pt;
-	return 0;//pthread_create(&pt, NULL, &decode_thread, is);
-    //stream_read_over;
-}
 
 void *decode_thread(void *arg) {
 	JNIEnv *env;
@@ -247,53 +178,27 @@ void *decode_thread(void *arg) {
 	}
 	VideoState *is = (VideoState*)arg;
     AVPacket packet;
+	 int frameFinished = 0;
+	 pFrame=avcodec_alloc_frame();
     while(!is->quit) {
 		LOGI(10, "### audioq size = %d, videoq size = %d", is->audioq.size, is->videoq.size);
- 		if(is->audioq.size > MAX_AUDIOQ_SIZE || is->videoq.size > MAX_VIDEOQ_SIZE) {
-		   usleep(50000); //50 ms
-		   continue;
-		}
-		if(av_read_frame(is->pFormatCtx, &packet)<0){
-			if(url_ferror(&pFormatCtx->pb) == 0) {
-				usleep(50000);
-				continue;
-			}else{
-				is->quit = 1;
-				break;
-			}
+ 		//if(is->videoq.size > MAX_VIDEOQ_SIZE) {//is->audioq.size > MAX_AUDIOQ_SIZE || 
+		//   usleep(50000); //50 ms
+		//   continue;
+		//}
+		if(av_read_frame(pFormatCtx, &packet)<0){
+			is->quit = 1;
+			break;
 		}
   		if(packet.stream_index==is->videoStream) {
+		int len1 = avcodec_decode_video2(pCodecCtx,
+				pFrame,
+				&frameFinished,
+				&packet);
+				LOGI(10, "@@@@@@@@@ %d", len1);
 			packet_queue_put(&is->videoq, &packet);
-			/**************************/
-			/*
-            avcodec_decode_video2(pCodecCtx, pFrame, &frameFinished, &packet);
-    		if(frameFinished) {
-                img_convert_ctx = sws_getContext(pCodecCtx->width, pCodecCtx->height, 
-                       pCodecCtx->pix_fmt, 
-                       pCodecCtx->width, pCodecCtx->height, PIX_FMT_RGB24, SWS_BICUBIC, 
-                       NULL, NULL, NULL);
-                if(img_convert_ctx == NULL) {
-                    LOGI(10,"could not initialize conversion context\n");
-                    return initialize_conversion_error;
-                }
-                sws_scale(img_convert_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, pCodecCtx->height, pFrameRGB->data, pFrameRGB->linesize);
-				
-                // save_frame(pFrameRGB, target_width, target_height, i);
-                fill_bitmap(&info, pixels, pFrameRGB);
-				AndroidBitmap_unlockPixels(env, bitmap);
-                i = 1;
-				//TODO callback refresh
-				if(mClass == NULL || mObject == NULL || refresh == NULL) {
-					int res = registerCallBack(env);
-					LOGI(10,"registerCallBack == %d", res);	
-					if(res != 0) {
-						return decode_next_frame;
-					}
-				}
-				(*env)->CallVoidMethod(env, mObject, refresh);
-    	    }*/
         } else if(packet.stream_index==is->audioStream) {
-			packet_queue_put(&is->audioq, &packet);
+			//packet_queue_put(&is->audioq, &packet);
 		} else {
 			av_free_packet(&packet);
 		}
@@ -326,7 +231,6 @@ void *video_thread(void *arg) {
       break;
     }
 	if(debug) LOGI(10,"video_thread get packet ====================");
-	usleep(1000000);
     pts = 0;
     global_video_pkt_pts = packet->pts;//is->video_st->codec
     len1 = avcodec_decode_video2(pCodecCtx,
@@ -352,7 +256,6 @@ void *video_thread(void *arg) {
       // if (queue_picture(is, pFrame, pts) < 0) {
 	  //	break;
       // }
-	  usleep(10000);
     }
     av_free_packet(packet);
   }
@@ -377,88 +280,11 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_getVideoR
     (*pEnv)->SetIntArrayRegion(pEnv, lRes, 0, 4, lVideoRes);
     return lRes;
 }
-/*
-int seek_frame(int tsms)
-{
-    int64_t frame;
-
-    frame = av_rescale(tsms,pFormatCtx->streams[videoStream]->time_base.den,pFormatCtx->streams[videoStream]->time_base.num);
-    frame/=1000;
-    
-    if(avformat_seek_file(pFormatCtx,videoStream,0,frame,frame,AVSEEK_FLAG_FRAME)<0) {
-        return 0;
-    }
-
-    avcodec_flush_buffers(pCodecCtx);
-
-    return 1;
-}
-*/
-/*
-void Java_com_iped_ffmpeg_test_Main_drawFrameAt(JNIEnv * env, jobject this, jstring bitmap, jint secs)
-{
-    AndroidBitmapInfo  info;
-    void*              pixels;
-    int                ret;
-
-    int err;
-    int i;
-    int frameFinished = 0;
-    AVPacket packet;
-    static struct SwsContext *img_convert_ctx;
-    int64_t seek_target;
-
-    if ((ret = AndroidBitmap_getInfo(env, bitmap, &info)) < 0) {
-        LOGI(10,"AndroidBitmap_getInfo() failed ! error=%d", ret);
-        return;
-    }
-    LOGI(10,"Checked on the bitmap");
-
-    if ((ret = AndroidBitmap_lockPixels(env, bitmap, &pixels)) < 0) {
-        LOGE(1,"AndroidBitmap_lockPixels() failed ! error=%d", ret);
-    }
-    LOGI(10,"Grabbed the pixels");
-
-    seek_frame(secs * 1000);
-
-    i = 0;
-    while ((i== 0) && (av_read_frame(pFormatCtx, &packet)>=0)) {
-  		if(packet.stream_index==videoStream) {
-            avcodec_decode_video2(pCodecCtx, pFrame, &frameFinished, &packet);
-    
-    		if(frameFinished) {
-                // This is much different than the tutorial, sws_scale
-                // replaces img_convert, but it's not a complete drop in.
-                // This version keeps the image the same size but swaps to
-                // RGB24 format, which works perfect for PPM output.
-                int target_width = 320;
-                int target_height = 240;
-                img_convert_ctx = sws_getContext(pCodecCtx->width, pCodecCtx->height, 
-                       pCodecCtx->pix_fmt, 
-                       target_width, target_height, PIX_FMT_RGB24, SWS_BICUBIC, 
-                       NULL, NULL, NULL);
-                if(img_convert_ctx == NULL) {
-                    LOGE(1,"could not initialize conversion context\n");
-                    return;
-                }
-                sws_scale(img_convert_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, pCodecCtx->height, pFrameRGB->data, pFrameRGB->linesize);
-
-                // save_frame(pFrameRGB, target_width, target_height, i);
-                fill_bitmap(&info, pixels, pFrameRGB);
-                i = 1;
-    	    }
-        }
-        av_free_packet(&packet);
-    }
-
-    //AndroidBitmap_unlockPixels(env, bitmap);
-}
-*/
-static void get_video_info(char *prFilename);
-
 
 void packet_queue_init(PacketQueue *q) {
 	memset(q, 0, sizeof(PacketQueue));
+	pthread_mutex_init(&q->mutex, NULL);
+	pthread_mutex_init(&q->cond, NULL);
 }
 
 /*parsing the video file, done by parse thread*/
@@ -631,7 +457,7 @@ int packet_queue_put(PacketQueue *q, AVPacket *pkt){
 	pkt1->pkt = *pkt;
 	pkt1->next = NULL;
 	//SDL_LockMutex(q->mutex);
-	pthread_mutex_lock(&mut);
+	pthread_mutex_lock(&q->mutex);
 
 	if (!q->last_pkt)
 		q->first_pkt = pkt1;
@@ -641,8 +467,8 @@ int packet_queue_put(PacketQueue *q, AVPacket *pkt){
 	q->nb_packets++;
 	q->size += pkt1->pkt.size;
 
-	pthread_cond_broadcast(&cond);//pthread_cond_signal
-	pthread_mutex_unlock(&mut);
+	pthread_cond_broadcast(&q->cond);//pthread_cond_signal
+	pthread_mutex_unlock(&q->mutex);
 	//SDL_CondSignal(q->cond);
 	//SDL_UnlockMutex(q->mutex);
 	return 0;

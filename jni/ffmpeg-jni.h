@@ -36,13 +36,15 @@ typedef  pthread_mutex_t  ffmpeg_lock_t;
 #endif
 
 
-pthread_mutex_t mut = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+//pthread_mutex_t mut = PTHREAD_MUTEX_INITIALIZER;
+//pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
   
 typedef struct PacketQueue {
 	AVPacketList *first_pkt, *last_pkt;
 	int nb_packets;
 	int size;
+	pthread_mutex_t mutex;
+	pthread_cond_t cond;
 	//SDL_mutex *mutex;
 	//SDL_cond *cond;
 } PacketQueue;
@@ -161,3 +163,7 @@ void ffmpeg_lock_init(ffmpeg_lock_t *lock);
 void ffmpeg_lock_enter(ffmpeg_lock_t *lock);
 void ffmpeg_lock_leave(ffmpeg_lock_t *lock);
 void ffmpeg_lock_destroy(ffmpeg_lock_t *lock);
+
+
+
+static void get_video_info(char *prFilename);
