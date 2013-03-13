@@ -178,24 +178,16 @@ void *decode_thread(void *arg) {
 	}
 	VideoState *is = (VideoState*)arg;
     AVPacket packet;
-	 int frameFinished = 0;
-	 pFrame=avcodec_alloc_frame();
     while(!is->quit) {
-		LOGI(10, "### audioq size = %d, videoq size = %d", is->audioq.size, is->videoq.size);
- 		//if(is->videoq.size > MAX_VIDEOQ_SIZE) {//is->audioq.size > MAX_AUDIOQ_SIZE || 
-		//   usleep(50000); //50 ms
-		//   continue;
-		//}
+ 		if(is->videoq.size > MAX_VIDEOQ_SIZE) {//is->audioq.size > MAX_AUDIOQ_SIZE || 
+		   usleep(50000); //50 ms
+		   continue;
+		}
 		if(av_read_frame(pFormatCtx, &packet)<0){
 			is->quit = 1;
 			break;
 		}
   		if(packet.stream_index==is->videoStream) {
-		int len1 = avcodec_decode_video2(pCodecCtx,
-				pFrame,
-				&frameFinished,
-				&packet);
-				LOGI(10, "@@@@@@@@@ %d", len1);
 			packet_queue_put(&is->videoq, &packet);
         } else if(packet.stream_index==is->audioStream) {
 			//packet_queue_put(&is->audioq, &packet);
@@ -230,14 +222,13 @@ void *video_thread(void *arg) {
 	  if(debug) LOGI(10,"video_thread get packet exit");
       break;
     }
-	if(debug) LOGI(10,"video_thread get packet ====================");
     pts = 0;
     global_video_pkt_pts = packet->pts;//is->video_st->codec
     len1 = avcodec_decode_video2(pCodecCtx,
 				pFrame,
 				&frameFinished,
-				&packet);
-	if(debug) LOGI(10,"video_thread get packet ====================%d", len1 );
+				packet);
+				LOGI(10, "#### length = %d", len1);
     if(packet->dts == AV_NOPTS_VALUE
        && pFrame->opaque
        && *(uint64_t*)pFrame->opaque
@@ -467,7 +458,7 @@ int packet_queue_put(PacketQueue *q, AVPacket *pkt){
 	q->nb_packets++;
 	q->size += pkt1->pkt.size;
 
-	pthread_cond_broadcast(&q->cond);//pthread_cond_signal
+	pthread_cond_signal(&q->cond);//pthread_cond_signal
 	pthread_mutex_unlock(&q->mutex);
 	//SDL_CondSignal(q->cond);
 	//SDL_UnlockMutex(q->mutex);
