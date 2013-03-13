@@ -60,6 +60,7 @@ static int packet_queue_get(PacketQueue *q, AVPacket *pkt, int block) {
 				*pkt = pkt1->pkt;
 				av_free(pkt1);
 				ret = 1;
+				LOGI(10,"packet get info: pts = %d, packet size = %d", pkt->pts, pkt->size);
 				break;
 		} else if (!block) {
 			ret = 0;
@@ -75,42 +76,104 @@ static int packet_queue_get(PacketQueue *q, AVPacket *pkt, int block) {
 	return ret;
 }
 
+int packet_queue_put(PacketQueue *q, AVPacket *pkt){
+	AVPacketList *pkt1;
+	if(av_dup_packet(pkt) < 0) {
+		LOGI(10,"av_dup_packet < 0");
+		return -1;
+	}
+	pkt1 = av_malloc(sizeof(AVPacketList));
+	if (!pkt1) {
+		return -1;
+	}
+	//LOGI(10,"packet put info: packet size = %d, duration = %d, pos = %d", pkt->size, pkt->duration, pkt->pos);
+	//LOGI(10, "### packet ------  data size = %d", pkt->size);
+	pkt1->pkt = *pkt;
+	pkt1->next = NULL;
+	//SDL_LockMutex(q->mutex);
+	pthread_mutex_lock(&q->mutex);
+	if (!q->last_pkt)
+		q->first_pkt = pkt1;
+	else
+		q->last_pkt->next = pkt1;
+	q->last_pkt = pkt1;
+	q->nb_packets++;
+	q->size += pkt1->pkt.size;
+	//LOGI(10, "### packet ------ pkt1->pkt.size = %d", pkt1->pkt.size);
+	pthread_cond_signal(&q->cond);//pthread_cond_signal
+	pthread_mutex_unlock(&q->mutex);
+	//SDL_CondSignal(q->cond);
+	//SDL_UnlockMutex(q->mutex);
+	return 0;
+}
+
 JNIEXPORT int JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(JNIEnv * env, jobject this,jstring name, jint d) { 
 	int ret;
 	debug = d;
-    int err;
+    
     int i;
-    AVCodec *pCodec;
-    av_register_all();
+    
 	(*env)->GetJavaVM(env, &g_jvm);
 	g_obj = (*env)->NewGlobalRef(env,g_obj);
+	is = av_mallocz(sizeof(VideoState));
+	av_register_all();
     gFileName = (char *)(*env)->GetStringUTFChars(env, name, NULL);
+		
+	pthread_t decode;
+	is->decode_tid =  pthread_create(&decode, NULL, &decode_thread, is);
+	if(debug)  LOGE(1,"pthread_create  decode_thread");
+	
+	///pstrcpy(is->filename, sizeof(is->filename), gFileName);	
+	//if(debug) LOGI(1,"audio rate = %d, channel = %d, sample_fmt = %d, frame_size = %d", aCodecCtx->sample_rate, aCodecCtx->channels, aCodecCtx->sample_fmt, aCodecCtx->frame_size);
+	//if(!is->video_tid) {
+	//	av_free(is);
+	//	return open_codec_fail;
+	//}
+	
+	return  open_file_success;
+}
+
+void *decode_thread(void *arg) {
+	VideoState *is = (VideoState*)arg;
+	AVFormatContext *pFormatCtx;
+	AVPacket pkt1, *packet = &pkt1;
+    AVCodec *pCodec;
+	
+	AVCodecContext *pCodecCtx;
+
+	int i;
+
+	is->videoStream = -1;
+	is->audioStream = -1;
+	int err;		
+	int videoStream = -1;
+    int audioStream = -1;
     err = av_open_input_file(&pFormatCtx,gFileName , NULL, 0, NULL);
     if(err!=0) {
 		if(debug) LOGI(10,"Couldn't open file");
         return open_file_fail;
     }
+	is->pFormatCtx = pFormatCtx;
     if(av_find_stream_info(pFormatCtx)<0) {
 		if(debug) LOGI(10,"Unable to get stream info");
         return get_stream_info_fail;
     }
-	is = av_mallocz(sizeof(VideoState));
-	is->pFormatCtx = pFormatCtx;
-    int videoStream = -1;
-    int audioStream = -1;
-	///pstrcpy(is->filename, sizeof(is->filename), gFileName);
-    for (i=0; i<pFormatCtx->nb_streams; i++) {
-        if(pFormatCtx->streams[i]->codec->codec_type==AVMEDIA_TYPE_VIDEO && videoStream<0) {
-            videoStream = i;
-        }
-		if(pFormatCtx->streams[i]->codec->codec_type==AVMEDIA_TYPE_AUDIO && audioStream<0) {
-			audioStream = i;
+	for (i=0; i<pFormatCtx->nb_streams; i++) {
+		if(pFormatCtx->streams[i]->codec->codec_type==AVMEDIA_TYPE_VIDEO && videoStream<0) {
+			videoStream = i;
 		}
     }
 	
-    if(videoStream>=0) {
-		ffmpeg_lock_init(&is->lock);
+	if(videoStream>=0) {
 		pCodecCtx=pFormatCtx->streams[videoStream]->codec;
+		is->img_convert_ctx = sws_getContext(pCodecCtx->width,
+				   pCodecCtx->height,
+				   pCodecCtx->pix_fmt,
+				   pCodecCtx->width,
+				   pCodecCtx->height,
+				   PIX_FMT_RGB24,
+				   SWS_BICUBIC,
+				   NULL, NULL, NULL);
 		pCodec=avcodec_find_decoder(pCodecCtx->codec_id);
 		if(!pCodec) {
 			if(debug)  LOGE(1,"Unsupported audio codec!");
@@ -126,81 +189,29 @@ JNIEXPORT int JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(J
 				is->frame_last_delay = 40e-3;
 				packet_queue_init(&is->videoq);
 				is->quit = 0; //1 exit
+				
+				pthread_t video;
+				is->video_tid =  pthread_create(&video, NULL, &video_thread, is);
+				if(debug)  LOGE(1,"pthread_create  video_thread");	
 			}
 		}
     }
-    if(audioStream>=0) {
-		aCodecCtx=pFormatCtx->streams[audioStream]->codec;   
-		aCodec = avcodec_find_decoder(aCodecCtx->codec_id);
-		if(!aCodec) {
-			if(debug)  LOGE(1,"Unsupported audio codec!");
-			//return unsurpport_codec;
-		} else {
-			if(avcodec_open(aCodecCtx, aCodec)<0){
-				if(debug)  LOGE(1,"Unable to open audio codec");
-				//return open_codec_fail;
-			} else {
-				is->audioStream = audioStream;
-				is->audio_st = pFormatCtx->streams[audioStream];
-				is->audio_buf_size = 0;
-				is->audio_buf_index = 0;
-				is->quit = 0;
-				memset(&is->audio_pkt, 0, sizeof(is->audio_pkt));
-				packet_queue_init(&is->audioq);
-			}
-		}		
-    }
-	if(is->videoStream < 0 || is->audioStream < 0) {
-		LOGI(10, "%s: could not open codecs", gFileName);
-		return open_file_fail;
-	}	
-	pthread_t decode;
-	is->decode_tid =  pthread_create(&decode, NULL, &decode_thread, is);
-	if(debug)  LOGE(1,"pthread_create  decode_thread");
-	pthread_t video;
-	is->video_tid =  pthread_create(&video, NULL, &video_thread, is);
-	if(debug)  LOGE(1,"pthread_create  video_thread");
-	
-	if(debug) LOGI(1,"audio rate = %d, channel = %d, sample_fmt = %d, frame_size = %d", aCodecCtx->sample_rate, aCodecCtx->channels, aCodecCtx->sample_fmt, aCodecCtx->frame_size);
-	//if(!is->video_tid) {
-	//	av_free(is);
-	//	return open_codec_fail;
-	//}
-	
-	return  open_file_success;
-}
-
-
-void *decode_thread(void *arg) {
-	JNIEnv *env;
-	if((*g_jvm)->AttachCurrentThread(g_jvm, &env, NULL) != JNI_OK) {
-		return -1;
-	}
-	VideoState *is = (VideoState*)arg;
-    AVPacket packet;
-	 int frameFinished = 0;
-	 pFrame=avcodec_alloc_frame();
+    //AVPacket packet;
+	// int frameFinished = 0;
     while(!is->quit) {
-		LOGI(10, "### audioq size = %d, videoq size = %d", is->audioq.size, is->videoq.size);
- 		//if(is->videoq.size > MAX_VIDEOQ_SIZE) {//is->audioq.size > MAX_AUDIOQ_SIZE || 
-		//   usleep(50000); //50 ms
-		//   continue;
-		//}
-		if(av_read_frame(pFormatCtx, &packet)<0){
+		//LOGI(10, "### audioq size = %d, videoq size = %d", is->audioq.size, is->videoq.size);
+ 		if(is->videoq.size > MAX_VIDEOQ_SIZE) {// 
+		   usleep(100000); //50 ms
+		   continue;
+		}
+		if(av_read_frame(is->pFormatCtx, packet)<0){
 			is->quit = 1;
 			break;
 		}
-  		if(packet.stream_index==is->videoStream) {
-		int len1 = avcodec_decode_video2(pCodecCtx,
-				pFrame,
-				&frameFinished,
-				&packet);
-				LOGI(10, "@@@@@@@@@ %d", len1);
-			packet_queue_put(&is->videoq, &packet);
-        } else if(packet.stream_index==is->audioStream) {
-			//packet_queue_put(&is->audioq, &packet);
-		} else {
-			av_free_packet(&packet);
+  		if(packet->stream_index==is->videoStream) {
+			packet_queue_put(&is->videoq, packet);
+        } else {
+			av_free_packet(packet);
 		}
     }
 	LOGI(10,"exit\n");
@@ -208,10 +219,6 @@ void *decode_thread(void *arg) {
 }
 
 void *video_thread(void *arg) {
-  JNIEnv *env;
-  if((*g_jvm)->AttachCurrentThread(g_jvm, &env, NULL) != JNI_OK) {
-	  return ((void *)-1);
-  }
   VideoState *is = (VideoState*)arg;
   AVPacket pkt1, *packet = &pkt1;
   int len1, frameFinished;
@@ -219,25 +226,20 @@ void *video_thread(void *arg) {
   double pts;
   int numBytes;
   pFrame=avcodec_alloc_frame();
-  pFrameRGB=avcodec_alloc_frame();
-  if(debug) LOGI(10,"Video size is [%d x %d]", pCodecCtx->width, pCodecCtx->height);
-  numBytes=avpicture_get_size(PIX_FMT_RGB24, pCodecCtx->width, pCodecCtx->height);
-  buffer=(uint8_t *)av_malloc(numBytes*sizeof(uint8_t));
-  avpicture_fill((AVPicture *)pFrameRGB, buffer, PIX_FMT_RGB24, pCodecCtx->width, pCodecCtx->height);
-
   for(;;) {
     if(packet_queue_get(&is->videoq, packet, 1) < 0) {
 	  if(debug) LOGI(10,"video_thread get packet exit");
       break;
     }
-	if(debug) LOGI(10,"video_thread get packet ====================");
+	LOGI(10,"packet get ------  result : pts = %d, packet size = %d", packet->pts, packet->size);
     pts = 0;
-    global_video_pkt_pts = packet->pts;//is->video_st->codec
-    len1 = avcodec_decode_video2(pCodecCtx,
+    global_video_pkt_pts = packet->pts;
+	//LOGI(10,"packet info: pts = %d, dts = %d, packet size = %d, stream_index = %d, flags = %d, duration = %d, pos = %d", packet->pts , packet->dts, packet->size, packet->stream_index, packet->flags, packet->duration, packet->pos);
+    len1 = avcodec_decode_video2(is->video_st->codec,
 				pFrame,
 				&frameFinished,
-				&packet);
-	if(debug) LOGI(10,"video_thread get packet ====================%d", len1 );
+				packet);
+	if(debug) LOGI(10,"video_decode length = %d, packet size = %d", len1 , packet->size);
     if(packet->dts == AV_NOPTS_VALUE
        && pFrame->opaque
        && *(uint64_t*)pFrame->opaque
@@ -260,7 +262,6 @@ void *video_thread(void *arg) {
     av_free_packet(packet);
   }
   av_free(pFrame);
-  LOGI(10, "#### ------------ video_thread exit");
   return ((void *)0);
 }
 
@@ -272,11 +273,11 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_getVideoR
         return NULL;
     }
     jint lVideoRes[4];
-    lVideoRes[0] = pCodecCtx->width;
-    lVideoRes[1] = pCodecCtx->height;
-    lVideoRes[2] = pCodecCtx->time_base.den;
-    lVideoRes[3] = pCodecCtx->time_base.num;
-    LOGI(1, "time den  = %d,num  = %d, video duration = %d,",pCodecCtx->time_base.num,pCodecCtx->time_base.den, pCodecCtx->bit_rate);
+    lVideoRes[0] = 1;//pCodecCtx->width;
+    lVideoRes[1] = 1;//pCodecCtx->height;
+    lVideoRes[2] = 1;//pCodecCtx->time_base.den;
+    lVideoRes[3] = 1;//pCodecCtx->time_base.num;
+    //LOGI(1, "time den  = %d,num  = %d, video duration = %d,",pCodecCtx->time_base.num,pCodecCtx->time_base.den, pCodecCtx->bit_rate);
     (*pEnv)->SetIntArrayRegion(pEnv, lRes, 0, 4, lVideoRes);
     return lRes;
 }
@@ -361,10 +362,10 @@ JNIEXPORT void JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_close(JNIEnv *
     av_free(pFrameRGB);
     
     // Free the YUV frame
-    av_free(pFrame);
+    //av_free(pFrame);
 
     /*close the video codec*/
-    avcodec_close(pCodecCtx);
+    //avcodec_close(pCodecCtx);
     /*close the video file*/
     av_close_input_file(pFormatCtx);
 
@@ -405,7 +406,7 @@ int registerCallBack(JNIEnv *env) {
 	}
 	if (mObject == NULL) {
 		if (GetProviderInstance(env, mClass) != 1) {
-			(*env)->DeleteLocalRef(env, mClass);
+			//(*env)->DeleteLocalRef(env, mClass);
 			return -1;
 		}
 		LOGI(10,"register local object OK.");
@@ -413,8 +414,8 @@ int registerCallBack(JNIEnv *env) {
 	if(refresh == NULL) {
 		refresh = (*env)->GetMethodID(env, mClass, "callBackRefresh","()V");
 		if(refresh == NULL) {
-			(*env)->DeleteLocalRef(env, mClass);
-			(*env)->DeleteLocalRef(env, mObject);
+			//(*env)->DeleteLocalRef(env, mClass);
+			//(*env)->DeleteLocalRef(env, mObject);
 			return -3;
 		}
 	}
@@ -442,36 +443,6 @@ void unRegisterCallBack(JNIEnv *env) {
 	}
 	//(*env)->CallVoidMethod(env,audio_track, method_release);
 	LOGI(10,"unregister native OK.");
-}
-
-int packet_queue_put(PacketQueue *q, AVPacket *pkt){
-	AVPacketList *pkt1;
-	if(av_dup_packet(pkt) < 0) {
-		LOGI(10,"av_dup_packet < 0");
-		return -1;
-	}
-	pkt1 = av_malloc(sizeof(AVPacketList));
-	if (!pkt1) {
-		return -1;
-	}
-	pkt1->pkt = *pkt;
-	pkt1->next = NULL;
-	//SDL_LockMutex(q->mutex);
-	pthread_mutex_lock(&q->mutex);
-
-	if (!q->last_pkt)
-		q->first_pkt = pkt1;
-	else
-		q->last_pkt->next = pkt1;
-	q->last_pkt = pkt1;
-	q->nb_packets++;
-	q->size += pkt1->pkt.size;
-
-	pthread_cond_broadcast(&q->cond);//pthread_cond_signal
-	pthread_mutex_unlock(&q->mutex);
-	//SDL_CondSignal(q->cond);
-	//SDL_UnlockMutex(q->mutex);
-	return 0;
 }
 
 void ffmpeg_lock_init(ffmpeg_lock_t *lock)

@@ -110,8 +110,7 @@ AVCodecContext *aCodecCtx;
 AVCodec *aCodec;
 /* Cheat to keep things simple and just use some globals. */
 AVFormatContext *pFormatCtx;
-AVCodecContext *pCodecCtx;
-AVFrame *pFrame;
+///AVFrame *pFrame;
 AVFrame *pFrameRGB;
 
 // “Ù∆µ∞¸∂”¡–
