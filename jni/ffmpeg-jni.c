@@ -16,6 +16,8 @@ this is the wrapper of the native functions
 #define LOGI(level, ...) if (level <= LOG_LEVEL) {__android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__);}
 #define LOGE(level, ...) if (level <= LOG_LEVEL) {__android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__);}
 
+jstring bitmap;
+
 static void fill_bitmap(AndroidBitmapInfo*  info, void *pixels, AVFrame *pFrame)
 {
     uint8_t *frameLine;
@@ -47,7 +49,6 @@ static int packet_queue_get(PacketQueue *q, AVPacket *pkt, int block) {
 	for(;;) {
 		if(is->quit) {
 			ret = -1;
-			if(debug) LOGI(10,"packet_queue_get  quit!");
 			break;
 		}
 		pkt1 = q->first_pkt;
@@ -60,14 +61,12 @@ static int packet_queue_get(PacketQueue *q, AVPacket *pkt, int block) {
 				*pkt = pkt1->pkt;
 				av_free(pkt1);
 				ret = 1;
-				LOGI(10,"packet get info: pts = %d, packet size = %d", pkt->pts, pkt->size);
 				break;
 		} else if (!block) {
 			ret = 0;
 			break;
 		} else {
 			//SDL_CondWait(q->cond, q->mutex);
-			if(debug) LOGI(10,"^^^^^^^^^^^^^^");
 			pthread_cond_wait(&q->cond, &q->mutex);
 		}
 	}
@@ -79,15 +78,12 @@ static int packet_queue_get(PacketQueue *q, AVPacket *pkt, int block) {
 int packet_queue_put(PacketQueue *q, AVPacket *pkt){
 	AVPacketList *pkt1;
 	if(av_dup_packet(pkt) < 0) {
-		LOGI(10,"av_dup_packet < 0");
 		return -1;
 	}
 	pkt1 = av_malloc(sizeof(AVPacketList));
 	if (!pkt1) {
 		return -1;
 	}
-	//LOGI(10,"packet put info: packet size = %d, duration = %d, pos = %d", pkt->size, pkt->duration, pkt->pos);
-	//LOGI(10, "### packet ------  data size = %d", pkt->size);
 	pkt1->pkt = *pkt;
 	pkt1->next = NULL;
 	//SDL_LockMutex(q->mutex);
@@ -99,18 +95,17 @@ int packet_queue_put(PacketQueue *q, AVPacket *pkt){
 	q->last_pkt = pkt1;
 	q->nb_packets++;
 	q->size += pkt1->pkt.size;
-	//LOGI(10, "### packet ------ pkt1->pkt.size = %d", pkt1->pkt.size);
-	pthread_cond_signal(&q->cond);//pthread_cond_signal
+	pthread_cond_signal(&q->cond);
 	pthread_mutex_unlock(&q->mutex);
 	//SDL_CondSignal(q->cond);
 	//SDL_UnlockMutex(q->mutex);
 	return 0;
 }
 
-JNIEXPORT int JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(JNIEnv * env, jobject this,jstring name, jint d) { 
+JNIEXPORT int JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(JNIEnv * env, jobject this,jstring name, jstring rect, jint d) { 
 	int ret;
 	debug = d;
-    
+    bitmap = rect;
     int i;
     
 	(*env)->GetJavaVM(env, &g_jvm);
@@ -122,27 +117,20 @@ JNIEXPORT int JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(J
 	pthread_t decode;
 	is->decode_tid =  pthread_create(&decode, NULL, &decode_thread, is);
 	if(debug)  LOGE(1,"pthread_create  decode_thread");
-	
-	///pstrcpy(is->filename, sizeof(is->filename), gFileName);	
-	//if(debug) LOGI(1,"audio rate = %d, channel = %d, sample_fmt = %d, frame_size = %d", aCodecCtx->sample_rate, aCodecCtx->channels, aCodecCtx->sample_fmt, aCodecCtx->frame_size);
+	if(debug) LOGI(1,"start thread id = %d", is->decode_tid);
 	//if(!is->video_tid) {
 	//	av_free(is);
 	//	return open_codec_fail;
-	//}
-	
-	return  open_file_success;
+	//}	
+	return  0;
 }
 
 void *decode_thread(void *arg) {
 	VideoState *is = (VideoState*)arg;
 	AVFormatContext *pFormatCtx;
-	AVPacket pkt1, *packet = &pkt1;
     AVCodec *pCodec;
-	
 	AVCodecContext *pCodecCtx;
-
 	int i;
-
 	is->videoStream = -1;
 	is->audioStream = -1;
 	int err;		
@@ -196,22 +184,20 @@ void *decode_thread(void *arg) {
 			}
 		}
     }
-    //AVPacket packet;
-	// int frameFinished = 0;
+    AVPacket packet;
     while(!is->quit) {
-		//LOGI(10, "### audioq size = %d, videoq size = %d", is->audioq.size, is->videoq.size);
  		if(is->videoq.size > MAX_VIDEOQ_SIZE) {// 
 		   usleep(100000); //50 ms
 		   continue;
 		}
-		if(av_read_frame(is->pFormatCtx, packet)<0){
+		if(av_read_frame(is->pFormatCtx, &packet)<0){
 			is->quit = 1;
 			break;
 		}
-  		if(packet->stream_index==is->videoStream) {
-			packet_queue_put(&is->videoq, packet);
+  		if(packet.stream_index==is->videoStream) {
+			packet_queue_put(&is->videoq, &packet);
         } else {
-			av_free_packet(packet);
+			av_free_packet(&packet);
 		}
     }
 	LOGI(10,"exit\n");
@@ -231,15 +217,12 @@ void *video_thread(void *arg) {
 	  if(debug) LOGI(10,"video_thread get packet exit");
       break;
     }
-	LOGI(10,"packet get ------  result : pts = %d, packet size = %d", packet->pts, packet->size);
     pts = 0;
     global_video_pkt_pts = packet->pts;
-	//LOGI(10,"packet info: pts = %d, dts = %d, packet size = %d, stream_index = %d, flags = %d, duration = %d, pos = %d", packet->pts , packet->dts, packet->size, packet->stream_index, packet->flags, packet->duration, packet->pos);
     len1 = avcodec_decode_video2(is->video_st->codec,
 				pFrame,
 				&frameFinished,
 				packet);
-	if(debug) LOGI(10,"video_decode length = %d, packet size = %d", len1 , packet->size);
     if(packet->dts == AV_NOPTS_VALUE
        && pFrame->opaque
        && *(uint64_t*)pFrame->opaque
