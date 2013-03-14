@@ -102,74 +102,64 @@ int packet_queue_put(PacketQueue *q, AVPacket *pkt){
 	return 0;
 }
 
-JNIEXPORT int JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(JNIEnv * env, jobject this,jstring name, jstring rect, jint d) { 
-	int ret;
+JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(JNIEnv * env, jobject this,jstring name, jint d) { 
+	jintArray videoInfo;
+	int arrLen = 4;
+    videoInfo = (*env)->NewIntArray(env, arrLen);
+    if (videoInfo == NULL) {
+        if(debug)LOGI(1, "cannot allocate memory for video size");
+        return NULL;
+    }
+    jint lVideoRes[arrLen];
+    int ret;
 	debug = d;
-    bitmap = rect;
-    int i;
     
 	(*env)->GetJavaVM(env, &g_jvm);
 	g_obj = (*env)->NewGlobalRef(env,g_obj);
 	is = av_mallocz(sizeof(VideoState));
 	av_register_all();
     gFileName = (char *)(*env)->GetStringUTFChars(env, name, NULL);
-		
-	pthread_t decode;
-	is->decode_tid =  pthread_create(&decode, NULL, &decode_thread, is);
-	if(debug)  LOGE(1,"pthread_create  decode_thread");
-	if(debug) LOGI(1,"start thread id = %d", is->decode_tid);
-	//if(!is->video_tid) {
-	//	av_free(is);
-	//	return open_codec_fail;
-	//}	
-	return  0;
-}
-
-void *decode_thread(void *arg) {
-	VideoState *is = (VideoState*)arg;
+	
 	AVFormatContext *pFormatCtx;
-    AVCodec *pCodec;
-	AVCodecContext *pCodecCtx;
-	int i;
-	is->videoStream = -1;
-	is->audioStream = -1;
-	int err;		
-	int videoStream = -1;
-    int audioStream = -1;
-    err = av_open_input_file(&pFormatCtx,gFileName , NULL, 0, NULL);
-    if(err!=0) {
+	if(av_open_input_file(&pFormatCtx,gFileName , NULL, 0, NULL)!=0) {
 		if(debug) LOGI(10,"Couldn't open file");
-        return open_file_fail;
+		lVideoRes[0] = open_file_fail;
+		(*env)->SetIntArrayRegion(env, videoInfo, 0, 4, lVideoRes);
+		return videoInfo;
     }
-	is->pFormatCtx = pFormatCtx;
+	is->pFormatCtx = pFormatCtx;    
     if(av_find_stream_info(pFormatCtx)<0) {
 		if(debug) LOGI(10,"Unable to get stream info");
-        return get_stream_info_fail;
+		lVideoRes[0] = get_stream_info_fail;
+		(*env)->SetIntArrayRegion(env, videoInfo, 0, 4, lVideoRes);
+		return videoInfo;
     }
+	int i;
+	is->videoStream = -1;
+	is->audioStream = -1;	
+	int videoStream = -1;
+    int audioStream = -1;
+	AVCodec *pCodec;
+	AVCodecContext *pCodecCtx;
 	for (i=0; i<pFormatCtx->nb_streams; i++) {
 		if(pFormatCtx->streams[i]->codec->codec_type==AVMEDIA_TYPE_VIDEO && videoStream<0) {
 			videoStream = i;
 		}
     }
-	
 	if(videoStream>=0) {
 		pCodecCtx=pFormatCtx->streams[videoStream]->codec;
-		is->img_convert_ctx = sws_getContext(pCodecCtx->width,
-				   pCodecCtx->height,
-				   pCodecCtx->pix_fmt,
-				   pCodecCtx->width,
-				   pCodecCtx->height,
-				   PIX_FMT_RGB24,
-				   SWS_BICUBIC,
-				   NULL, NULL, NULL);
 		pCodec=avcodec_find_decoder(pCodecCtx->codec_id);
 		if(!pCodec) {
 			if(debug)  LOGE(1,"Unsupported audio codec!");
-			//return unsurpport_codec;
+			lVideoRes[0] = unsurpport_codec;
+			(*env)->SetIntArrayRegion(env, videoInfo, 0, 4, lVideoRes);
+			return videoInfo;
 		}else {
 			if(avcodec_open(pCodecCtx, pCodec)<0){
 				if(debug)  LOGE(1,"Unable to open audio codec");
-				//return open_codec_fail;
+				lVideoRes[0] = open_codec_fail;
+				(*env)->SetIntArrayRegion(env, videoInfo, 0, 4, lVideoRes);
+				return videoInfo;
 			} else {
 				is->videoStream = videoStream;
 				is->video_st = pFormatCtx->streams[videoStream];
@@ -177,13 +167,33 @@ void *decode_thread(void *arg) {
 				is->frame_last_delay = 40e-3;
 				packet_queue_init(&is->videoq);
 				is->quit = 0; //1 exit
-				
-				pthread_t video;
-				is->video_tid =  pthread_create(&video, NULL, &video_thread, is);
-				if(debug)  LOGE(1,"pthread_create  video_thread");	
 			}
 		}
     }
+	lVideoRes[0] = pCodecCtx->width;
+    lVideoRes[1] = pCodecCtx->height;
+    lVideoRes[2] = pCodecCtx->time_base.den;
+    lVideoRes[3] = pCodecCtx->time_base.num;
+    //LOGI(1, "time den  = %d,num  = %d, video duration = %d,",pCodecCtx->time_base.num,pCodecCtx->time_base.den, pCodecCtx->bit_rate);
+	(*env)->SetIntArrayRegion(env, videoInfo, 0, 4, lVideoRes);
+	return  videoInfo;
+}
+
+int Java_com_sky_drovik_player_ffmpeg_JniUtils_decodeMedia(JNIEnv * env, jobject this, jstring rect)
+{
+	bitmap = rect;
+	pthread_t decode;
+	is->decode_tid =  pthread_create(&decode, NULL, &decode_thread, is);
+	if(debug)  LOGE(1,"pthread_create  decode_thread");
+	if(debug) LOGI(1,"start thread id = %d", is->decode_tid);
+	pthread_t video;
+	is->video_tid =  pthread_create(&video, NULL, &video_thread, is);
+	if(debug)  LOGE(1,"pthread_create  video_thread");
+	return is->video_tid;
+}
+
+void *decode_thread(void *arg) {
+	VideoState *is = (VideoState*)arg;
     AVPacket packet;
     while(!is->quit) {
  		if(is->videoq.size > MAX_VIDEOQ_SIZE) {// 
@@ -209,9 +219,21 @@ void *video_thread(void *arg) {
   AVPacket pkt1, *packet = &pkt1;
   int len1, frameFinished;
   AVFrame *pFrame;
+  AVFrame *pFrameRGB;
   double pts;
   int numBytes;
   pFrame=avcodec_alloc_frame();
+  pFrameRGB=avcodec_alloc_frame();
+  int ret;
+  AndroidBitmapInfo  info;
+  void* pixels;
+  static struct SwsContext *img_convert_ctx;
+  AVCodecContext *pCodecCtx;
+  pCodecCtx = is->video_st->codec;
+  if ((ret = AndroidBitmap_getInfo(g_jvm, bitmap, &info)) < 0) {
+        LOGE(1,"AndroidBitmap_getInfo() failed ! error=%d", ret);
+        return bitmap_getinfo_error;
+  }
   for(;;) {
     if(packet_queue_get(&is->videoq, packet, 1) < 0) {
 	  if(debug) LOGI(10,"video_thread get packet exit");
@@ -237,6 +259,19 @@ void *video_thread(void *arg) {
     
     if (frameFinished) {
 	   LOGI(10, "#### show pic");
+	   img_convert_ctx = sws_getContext(pCodecCtx->width, pCodecCtx->height, 
+                       pCodecCtx->pix_fmt, 
+                       pCodecCtx->width, pCodecCtx->height, PIX_FMT_RGB24, SWS_BICUBIC, 
+                       NULL, NULL, NULL);
+		if(img_convert_ctx == NULL) {
+			LOGI(10,"could not initialize conversion context\n");
+			return;
+		}
+		sws_scale(img_convert_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, pCodecCtx->height, pFrameRGB->data, pFrameRGB->linesize);
+				
+		// save_frame(pFrameRGB, target_width, target_height, i);
+		fill_bitmap(&info, pixels, pFrameRGB);
+		AndroidBitmap_unlockPixels(g_jvm, bitmap);
       //pts = synchronize_video(is, pFrame, pts);
       // if (queue_picture(is, pFrame, pts) < 0) {
 	  //	break;
