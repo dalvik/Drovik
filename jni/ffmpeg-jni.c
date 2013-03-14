@@ -119,6 +119,10 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
 	is = av_mallocz(sizeof(VideoState));
 	av_register_all();
     gFileName = (char *)(*env)->GetStringUTFChars(env, name, NULL);
+	//is->pictq_mutex = SDL_CreateMutex();
+	//is->pictq_cond = SDL_CreateCond();
+	pthread_mutex_init(&is->pictq_mutex, NULL);
+	pthread_mutex_init(&is->pictq_cond, NULL);
 	
 	AVFormatContext *pFormatCtx;
 	if(av_open_input_file(&pFormatCtx,gFileName , NULL, 0, NULL)!=0) {
@@ -148,6 +152,14 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
     }
 	if(videoStream>=0) {
 		pCodecCtx=pFormatCtx->streams[videoStream]->codec;
+		is->img_convert_ctx = sws_getContext(pCodecCtx->width,
+				   pCodecCtx->height,
+				   pCodecCtx->pix_fmt,
+				   pCodecCtx->width,
+				   pCodecCtx->height,
+				   PIX_FMT_RGB24,
+				   SWS_BICUBIC,
+				   NULL, NULL, NULL);
 		pCodec=avcodec_find_decoder(pCodecCtx->codec_id);
 		if(!pCodec) {
 			if(debug)  LOGE(1,"Unsupported audio codec!");
@@ -181,7 +193,7 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
 
 int Java_com_sky_drovik_player_ffmpeg_JniUtils_decodeMedia(JNIEnv * env, jobject this, jstring rect)
 {
-	bitmap = rect;
+	int ret;
 	pthread_t decode;
 	is->decode_tid =  pthread_create(&decode, NULL, &decode_thread, is);
 	if(debug)  LOGE(1,"pthread_create  decode_thread");
@@ -190,6 +202,113 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_decodeMedia(JNIEnv * env, jobject
 	is->video_tid =  pthread_create(&video, NULL, &video_thread, is);
 	if(debug)  LOGE(1,"pthread_create  video_thread");
 	return is->video_tid;
+}
+
+int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject this, jstring bitmap)
+{
+	AndroidBitmapInfo  info;
+	int ret;
+     if ((ret = AndroidBitmap_getInfo(env, bitmap, &info)) < 0) {
+        LOGE(1,"AndroidBitmap_getInfo() failed ! error=%d", ret);
+        return bitmap_getinfo_error;
+	}
+	while(!is->quit && is->video_st) {
+		//fill_bitmap(&info, pixels, pFrameRGB);
+		//AndroidBitmap_unlockPixels(env, bitmap);
+		usleep(1000000);
+		LOGI(1,"display");
+	}
+	return 0;
+}
+
+int queue_picture(VideoState *is, AVFrame *pFrame, double pts) {
+  VideoPicture *vp;
+  int dst_pix_fmt;
+  AVPicture pict;
+  
+  //pFrameRGB=avcodec_alloc_frame();
+  //SDL_LockMutex(is->pictq_mutex);
+  pthread_mutex_lock(&is->pictq_mutex);
+  while(is->pictq_size>=VIDEO_PICTURE_QUEUE_SIZE &&
+	!is->quit) {
+    //SDL_CondWait(is->pictq_cond, is->pictq_mutex);
+	if(debug) LOGE(10, "picture is full");
+	pthread_cond_wait(&is->pictq_cond, &is->pictq_mutex);
+  }
+  //SDL_UnlockMutex(is->pictq_mutex);
+  pthread_mutex_unlock(&is->pictq_mutex);
+  if(is->quit) {
+    return -1;
+  }
+  vp = &is->pictq[is->pictq_windex];
+ /*
+  if (!vp->bmp ||
+      vp->width != is->video_st->codec->width ||
+      vp->height != is->video_st->codec->height) {
+    //SDL_Event event;
+    
+    vp->allocated = 0;
+    //event.type = FF_ALLOC_EVENT;
+    //event.user.data1 = is;
+    //SDL_PushEvent(&event);
+    
+    //SDL_LockMutex(is->pictq_mutex);
+	pthread_mutex_lock(&is->pictq_mutex);
+    while(!vp->allocated && !is->quit) {
+      //SDL_CondWait(is->pictq_cond, is->pictq_mutex);
+	  pthread_cond_wait(&is->pictq_cond, &is->pictq_mutex);
+    }
+    //SDL_UnlockMutex(is->pictq_mutex);
+	pthread_mutex_unlock(&is->pictq_mutex);
+    if (is->quit) {
+      return -1;
+    }
+  }*/
+  
+  //if (vp->bmp) {
+    //SDL_LockYUVOverlay(vp->bmp);
+    dst_pix_fmt = PIX_FMT_RGB24;
+    //pict.data[0] = vp->bmp->pixels[0];
+    //pict.data[1] = vp->bmp->pixels[2];
+    //pict.data[2] = vp->bmp->pixels[1];
+
+    //pict.linesize[0] = vp->bmp->pitches[0];
+    //pict.linesize[1] = vp->bmp->pitches[2];
+    //pict.linesize[2] = vp->bmp->pitches[1];
+    //
+    sws_scale(is->img_convert_ctx,
+	      pFrame->data,
+	      pFrame->linesize, 0,
+	      is->video_st->codec->height,
+	      pict.data,
+	      pict.linesize);
+    //
+    //SDL_UnlockYUVOverlay(vp->bmp);
+    vp->pts = pts;
+
+    if (++is->pictq_windex == VIDEO_PICTURE_QUEUE_SIZE) {
+      is->pictq_windex = 0;
+    }
+    //SDL_LockMutex(is->pictq_mutex);
+	pthread_mutex_lock(&is->pictq_mutex);
+    is->pictq_size ++;
+    //SDL_UnlockMutex(is->pictq_mutex);
+	pthread_mutex_unlock(&is->pictq_mutex);
+ // }
+  return 0;
+}
+
+double synchronize_video(VideoState *is, AVFrame *src_frame, double pts) {
+  double frame_delay;
+  if (pts != 0) {
+    is->video_clock = pts;
+  } else {
+    pts = is->video_clock;
+  }
+  frame_delay = av_q2d(is->video_st->codec->time_base);
+  frame_delay += src_frame->repeat_pict * (frame_delay * 0.5);
+  is->video_clock += frame_delay;
+  return pts;
 }
 
 void *decode_thread(void *arg) {
@@ -223,17 +342,20 @@ void *video_thread(void *arg) {
   double pts;
   int numBytes;
   pFrame=avcodec_alloc_frame();
-  pFrameRGB=avcodec_alloc_frame();
   int ret;
+  /*
   AndroidBitmapInfo  info;
   void* pixels;
   static struct SwsContext *img_convert_ctx;
-  AVCodecContext *pCodecCtx;
-  pCodecCtx = is->video_st->codec;
-  if ((ret = AndroidBitmap_getInfo(g_jvm, bitmap, &info)) < 0) {
+  JNIEnv *env;
+  if((*g_jvm)->AttachCurrentThread(g_jvm,(void **)&env, NULL)<0) {
+		if(debug) LOGE(1,"AttachCurrentThread fail!");
+		return;
+  }
+  if ((ret = AndroidBitmap_getInfo(env, bitmap, &info)) < 0) {
         LOGE(1,"AndroidBitmap_getInfo() failed ! error=%d", ret);
         return bitmap_getinfo_error;
-  }
+  }*/
   for(;;) {
     if(packet_queue_get(&is->videoq, packet, 1) < 0) {
 	  if(debug) LOGI(10,"video_thread get packet exit");
@@ -259,23 +381,26 @@ void *video_thread(void *arg) {
     
     if (frameFinished) {
 	   LOGI(10, "#### show pic");
-	   img_convert_ctx = sws_getContext(pCodecCtx->width, pCodecCtx->height, 
-                       pCodecCtx->pix_fmt, 
-                       pCodecCtx->width, pCodecCtx->height, PIX_FMT_RGB24, SWS_BICUBIC, 
+	   /*
+	   img_convert_ctx = sws_getContext(is->video_st->codec->width, is->video_st->codec->height, 
+                       is->video_st->codec->pix_fmt, 
+                       is->video_st->codec->width, is->video_st->codec->height, PIX_FMT_RGB24, SWS_BICUBIC, 
                        NULL, NULL, NULL);
 		if(img_convert_ctx == NULL) {
 			LOGI(10,"could not initialize conversion context\n");
 			return;
 		}
-		sws_scale(img_convert_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, pCodecCtx->height, pFrameRGB->data, pFrameRGB->linesize);
+		sws_scale(img_convert_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, is->video_st->codec->height, pFrameRGB->data, pFrameRGB->linesize);
 				
 		// save_frame(pFrameRGB, target_width, target_height, i);
 		fill_bitmap(&info, pixels, pFrameRGB);
-		AndroidBitmap_unlockPixels(g_jvm, bitmap);
-      //pts = synchronize_video(is, pFrame, pts);
-      // if (queue_picture(is, pFrame, pts) < 0) {
-	  //	break;
-      // }
+		AndroidBitmap_unlockPixels(env, bitmap);
+		*/
+       pts = synchronize_video(is, pFrame, pts);
+	   LOGI(10, "#### 1111");
+       if (queue_picture(is, pFrame, pts) < 0) {
+			break;
+       }
     }
     av_free_packet(packet);
   }

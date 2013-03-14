@@ -50,13 +50,10 @@ typedef struct PacketQueue {
 } PacketQueue;
 
 typedef struct VideoPicture {
-
 	//SDL_Overlay *bmp;
-
 	int width, height;
-
 	int allocated;
-
+	double pts;
 } VideoPicture;
 
 
@@ -81,6 +78,8 @@ typedef struct VideoState {
   PacketQueue     videoq;
   VideoPicture    pictq[VIDEO_PICTURE_QUEUE_SIZE];
   int             pictq_size, pictq_rindex, pictq_windex;
+  pthread_mutex_t pictq_mutex;
+  pthread_cond_t pictq_cond;
   //SDL_mutex       *pictq_mutex;
   //SDL_cond        *pictq_cond;
   //SDL_Thread      *parse_tid;
