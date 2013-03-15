@@ -102,6 +102,21 @@ int packet_queue_put(PacketQueue *q, AVPacket *pkt){
 	return 0;
 }
 
+int our_get_buffer(struct AVCodecContext *c, AVFrame *pic) {
+  int ret = avcodec_default_get_buffer(c, pic);
+  uint64_t *pts = av_malloc(sizeof(uint64_t));
+  *pts = global_video_pkt_pts;
+  pic->opaque = pts;
+  return ret;
+}
+
+void our_release_buffer(struct AVCodecContext *c, AVFrame *pic) {
+  if (pic) {
+    av_freep(&pic->opaque);
+  }
+  avcodec_default_release_buffer(c, pic);
+}
+
 JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(JNIEnv * env, jobject this,jstring name, jint d) { 
 	jintArray videoInfo;
 	int arrLen = 4;
@@ -179,6 +194,8 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
 				is->frame_last_delay = 40e-3;
 				packet_queue_init(&is->videoq);
 				is->quit = 0; //1 exit
+				pCodecCtx->get_buffer = our_get_buffer;
+				pCodecCtx->release_buffer = our_release_buffer;
 			}
 		}
     }
@@ -325,10 +342,15 @@ void *decode_thread(void *arg) {
 		}
   		if(packet.stream_index==is->videoStream) {
 			packet_queue_put(&is->videoq, &packet);
-        } else {
+        } else if (packet.stream_index == is->audioStream) {
+		  packet_queue_put(&is->audioq, &packet);
+		} else {
 			av_free_packet(&packet);
 		}
     }
+	while (!is->quit) {
+		usleep(100000);
+	}
 	LOGI(10,"exit\n");
 	return ((void *)0);
 }
@@ -397,7 +419,6 @@ void *video_thread(void *arg) {
 		AndroidBitmap_unlockPixels(env, bitmap);
 		*/
        pts = synchronize_video(is, pFrame, pts);
-	   LOGI(10, "#### 1111");
        if (queue_picture(is, pFrame, pts) < 0) {
 			break;
        }
