@@ -25,18 +25,25 @@ static void fill_bitmap(AndroidBitmapInfo*  info, void *pixels, AVFrame *pFrame)
     int  yy;
     for (yy = 0; yy < info->height; yy++) {
         uint8_t*  line = (uint8_t*)pixels;
+		LOGI(10,"### line = %d", &line);
         frameLine = (uint8_t *)pFrame->data[0] + (yy * pFrame->linesize[0]);
-
+		LOGI(10,"### frameLine = %d", &frameLine);
         int xx;
+		LOGI(10,"### info->width = %d", info->width);
         for (xx = 0; xx < info->width; xx++) {
             int out_offset = xx * 4;
             int in_offset = xx * 3;
-
+LOGI(10,"###!!!!!!!!!!!!!!!!!!!!!!");
             line[out_offset] = frameLine[in_offset];
+			LOGI(10,"###11111");
             line[out_offset+1] = frameLine[in_offset+1];
+			LOGI(10,"###222");
             line[out_offset+2] = frameLine[in_offset+2];
+			LOGI(10,"###33333");
             line[out_offset+3] = 0;
+			LOGI(10,"###4444");
         }
+		LOGI(10,"###555");
         pixels = (char*)pixels + info->stride;
     }
 }
@@ -117,6 +124,68 @@ void our_release_buffer(struct AVCodecContext *c, AVFrame *pic) {
   avcodec_default_release_buffer(c, pic);
 }
 
+double get_audio_clock(VideoState *is) {
+	double pts;
+	int hw_buf_size, bytes_per_sec, n;
+
+	pts = is->audio_clock;
+	hw_buf_size = is->audio_buf_size - is->audio_buf_index;
+	bytes_per_sec = 0;
+	n = is->audio_st->codec->channels * 2;
+	if (is->audio_st) {
+		bytes_per_sec = is->audio_st->codec->sample_rate * n;
+	}
+	if (bytes_per_sec) {
+		pts -= (double)hw_buf_size / bytes_per_sec;
+	}
+	return pts;
+}
+
+int audio_decode_frame(VideoState*is, uint8_t *audio_buf, int buf_size, double *pts_ptr) {
+  int len1, data_size, n;
+  AVPacket *pkt = &is->audio_pkt;
+  double pts;
+  
+  for (;;) {
+    while (is->audio_pkt_size > 0) {
+      data_size = buf_size;
+      //len1 = avcodec_decode_audio3(is->audio_st->codec,
+       //                            (int16_t *)audio_buf, 
+       ////                            &data_size,
+       //                            is->audio_pkt_data,
+      //                             is->audio_pkt_size);
+      if (len1 < 0) {
+	is->audio_pkt_size = 0;
+	break;
+      }
+      is->audio_pkt_data += len1;
+      is->audio_pkt_size -= len1;
+      if (data_size <= 0) {
+	continue;
+      }
+      pts = is->audio_clock;
+      *pts_ptr = pts;
+      n = 2 * is->audio_st->codec->channels;
+      is->audio_clock += (double)data_size / (double)(n*is->audio_st->codec->sample_rate);
+      return data_size;
+    }
+    if (pkt->data) {
+      av_free_packet(pkt);
+    }
+    if (is->quit) {
+      return -1;
+    }
+    if (packet_queue_get(&is->audioq, pkt, 1) < 0) {
+      return -1;
+    }
+    is->audio_pkt_data = pkt->data;
+    is->audio_pkt_size = pkt->size;
+    if (pkt->pts != AV_NOPTS_VALUE) {
+      is->audio_clock = av_q2d(is->audio_st->time_base)*pkt->pts;
+    }
+  }
+}
+
 JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(JNIEnv * env, jobject this,jstring name, jint d) { 
 	jintArray videoInfo;
 	int arrLen = 4;
@@ -167,6 +236,7 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
     }
 	if(videoStream>=0) {
 		pCodecCtx=pFormatCtx->streams[videoStream]->codec;
+		gVideoCodecCtx = pCodecCtx;
 		is->img_convert_ctx = sws_getContext(pCodecCtx->width,
 				   pCodecCtx->height,
 				   pCodecCtx->pix_fmt,
@@ -224,15 +294,47 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_decodeMedia(JNIEnv * env, jobject
 int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject this, jstring bitmap)
 {
 	AndroidBitmapInfo  info;
+	void*              pixels;
 	int ret;
      if ((ret = AndroidBitmap_getInfo(env, bitmap, &info)) < 0) {
         LOGE(1,"AndroidBitmap_getInfo() failed ! error=%d", ret);
         return bitmap_getinfo_error;
 	}
+	VideoPicture *vp;
+	//AVPicture *pict;
+	AVFrame *pFrameRGB;
 	while(!is->quit && is->video_st) {
 		//fill_bitmap(&info, pixels, pFrameRGB);
 		//AndroidBitmap_unlockPixels(env, bitmap);
-		usleep(1000000);
+		
+		if(is->pictq_size == 0) {
+			usleep(1000000);
+		} else {
+			if ((ret = AndroidBitmap_lockPixels(env, bitmap, &pixels)) < 0) {
+				LOGE(1,"AndroidBitmap_lockPixels() failed ! error=%d", ret);
+				continue;
+			}
+			// È¡³öÍ¼Ïñ
+			if(++is->pictq_rindex == VIDEO_PICTURE_QUEUE_SIZE) {
+				is->pictq_rindex = 0;
+			}
+			vp = &is->pictq[is->pictq_rindex];
+			pFrameRGB = vp->pict;
+			//LOGE(1,"222 %p, %p p%", pict, vp->pict, &vp->pict);		
+			LOGI(1,"----------------------%d, %d",vp->pts, pFrameRGB->linesize);	
+			fill_bitmap(&info, pixels, pFrameRGB);
+			
+			LOGE(1,"3333 width = %d, height = %d",  info.width, info.height);		
+			//LOGE(1,"444 data[0] = %d, linesize[0] = %d",  pFrameRGB->data[0], pFrameRGB->linesize[0]);
+LOGE(1,"------------- data[0] = %d, linesize[0] = %d, data[1] = %d, linesize[1] = %d, data[2] = %d, linesize[2] = %d",  pFrameRGB->data[0], pFrameRGB->linesize[0],  pFrameRGB->data[1], pFrameRGB->linesize[1],  pFrameRGB->data[2], pFrameRGB->linesize[2]);			
+			AndroidBitmap_unlockPixels(env, bitmap);
+			
+			///
+			pthread_mutex_lock(&is->pictq_mutex);
+			is->pictq_size--;
+			pthread_mutex_unlock(&is->pictq_mutex);
+		}
+		
 		LOGI(1,"display");
 	}
 	return 0;
@@ -242,6 +344,7 @@ int queue_picture(VideoState *is, AVFrame *pFrame, double pts) {
   VideoPicture *vp;
   int dst_pix_fmt;
   AVPicture pict;
+  AVFrame *pFrameRGB;
   
   //pFrameRGB=avcodec_alloc_frame();
   //SDL_LockMutex(is->pictq_mutex);
@@ -257,6 +360,7 @@ int queue_picture(VideoState *is, AVFrame *pFrame, double pts) {
   if(is->quit) {
     return -1;
   }
+  pFrameRGB=avcodec_alloc_frame();
   vp = &is->pictq[is->pictq_windex];
  /*
   if (!vp->bmp ||
@@ -293,16 +397,18 @@ int queue_picture(VideoState *is, AVFrame *pFrame, double pts) {
     //pict.linesize[1] = vp->bmp->pitches[2];
     //pict.linesize[2] = vp->bmp->pitches[1];
     //
+	LOGE(1,"#### data[0] = %d, linesize[0] = %d, data[1] = %d, linesize[1] = %d, data[2] = %d, linesize[2] = %d",  pFrame->data[0], pFrame->linesize[0],  pFrame->data[1], pFrame->linesize[1],  pFrame->data[2], pFrame->linesize[2]);
     sws_scale(is->img_convert_ctx,
 	      pFrame->data,
 	      pFrame->linesize, 0,
 	      is->video_st->codec->height,
-	      pict.data,
-	      pict.linesize);
+	      pFrameRGB->data,
+	      pFrameRGB->linesize);
     //
     //SDL_UnlockYUVOverlay(vp->bmp);
     vp->pts = pts;
-
+	LOGE(1,"------------- data[0] = %d, linesize[0] = %d, data[1] = %d, linesize[1] = %d, data[2] = %d, linesize[2] = %d",  pFrameRGB->data[0], pFrameRGB->linesize[0],  pFrameRGB->data[1], pFrameRGB->linesize[1],  pFrameRGB->data[2], pFrameRGB->linesize[2]);	
+	vp->pict = pFrameRGB;
     if (++is->pictq_windex == VIDEO_PICTURE_QUEUE_SIZE) {
       is->pictq_windex = 0;
     }
@@ -364,7 +470,9 @@ void *video_thread(void *arg) {
   double pts;
   int numBytes;
   pFrame=avcodec_alloc_frame();
+  pFrameRGB=avcodec_alloc_frame();
   int ret;
+  static struct SwsContext *img_convert_ctx;
   /*
   AndroidBitmapInfo  info;
   void* pixels;
@@ -389,6 +497,27 @@ void *video_thread(void *arg) {
 				pFrame,
 				&frameFinished,
 				packet);
+	//sws_scale(img_convert_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, is->video_st->codec->height, pFrameRGB->data, pFrameRGB->linesize);
+	img_convert_ctx = sws_getContext(gVideoCodecCtx->width,
+				   gVideoCodecCtx->height,
+				   gVideoCodecCtx->pix_fmt,
+				   gVideoCodecCtx->width,
+				   gVideoCodecCtx->height,
+				   PIX_FMT_RGB24,
+				   SWS_BICUBIC,
+				   NULL, NULL, NULL);
+	if(img_convert_ctx == NULL) {
+                    LOGI(10,"could not initialize conversion context\n");
+    }			   
+	sws_scale(img_convert_ctx,
+	      (const uint8_t* const*)pFrame->data,
+	      pFrame->linesize, 0,
+	      is->video_st->codec->height,
+	      pFrameRGB->data,
+	      pFrameRGB->linesize);
+		  
+	LOGE(1,"RRRRRRRRRRRRRR data[0] = %d, linesize[0] = %d, data[1] = %d, linesize[1] = %d, data[2] = %d, linesize[2] = %d",  pFrameRGB->data[0], pFrameRGB->linesize[0],  pFrameRGB->data[1], pFrameRGB->linesize[1],  pFrameRGB->data[2], pFrameRGB->linesize[2]);	
+	
     if(packet->dts == AV_NOPTS_VALUE
        && pFrame->opaque
        && *(uint64_t*)pFrame->opaque

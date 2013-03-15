@@ -51,6 +51,7 @@ typedef struct PacketQueue {
 
 typedef struct VideoPicture {
 	//SDL_Overlay *bmp;
+	AVPicture *pict;
 	int width, height;
 	int allocated;
 	double pts;
