@@ -297,14 +297,10 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
         return bitmap_getinfo_error;
 	}
 	VideoPicture *vp;
-	//AVPicture *pict;
-	AVFrame *pFrameRGB;
 	while(!is->quit && is->video_st) {
-		//fill_bitmap(&info, pixels, pFrameRGB);
-		//AndroidBitmap_unlockPixels(env, bitmap);
-		
 		if(is->pictq_size == 0) {
-			usleep(1000000);
+			usleep(10000);
+			LOGI(1,"no image, wait.");
 		} else {
 			if ((ret = AndroidBitmap_lockPixels(env, bitmap, &pixels)) < 0) {
 				LOGE(1,"AndroidBitmap_lockPixels() failed ! error=%d", ret);
@@ -315,23 +311,14 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 				is->pictq_rindex = 0;
 			}
 			vp = &is->pictq[is->pictq_rindex];
-			pFrameRGB = vp->pict;
-			//LOGE(1,"222 %p, %p p%", pict, vp->pict, &vp->pict);		
-			LOGI(1,"----------------------%d, %d",vp->pts, pFrameRGB->linesize);	
-			fill_bitmap(&info, pixels, pFrameRGB);
-			
-			LOGE(1,"3333 width = %d, height = %d",  info.width, info.height);		
-			//LOGE(1,"444 data[0] = %d, linesize[0] = %d",  pFrameRGB->data[0], pFrameRGB->linesize[0]);
-LOGE(1,"-------wwwwwwwwwwwwww------ data[0] = %d, linesize[0] = %d, data[1] = %d, linesize[1] = %d, data[2] = %d, linesize[2] = %d",  pFrameRGB->data[0], pFrameRGB->linesize[0],  pFrameRGB->data[1], pFrameRGB->linesize[1],  pFrameRGB->data[2], pFrameRGB->linesize[2]);			
-			AndroidBitmap_unlockPixels(env, bitmap);
-			
-			///
+			fill_bitmap(&info, pixels, vp->pict);
 			pthread_mutex_lock(&is->pictq_mutex);
 			is->pictq_size--;
+			pthread_cond_signal(&is->pictq_cond);
 			pthread_mutex_unlock(&is->pictq_mutex);
+			AndroidBitmap_unlockPixels(env, bitmap);
+			LOGI(1,"refresh");
 		}
-		
-		LOGI(1,"display");
 	}
 	return 0;
 }
@@ -354,16 +341,14 @@ int queue_picture(VideoState *is, AVFrame *pFrame, double pts) {
     return -1;
   }
     vp = &is->pictq[is->pictq_windex];
-    
     sws_scale(is->img_convert_ctx,
 	      pFrame->data,
 	      pFrame->linesize, 0,
 	      is->video_st->codec->height,
 	      pFrameRGB->data,
 	      pFrameRGB->linesize);
-    
     vp->pts = pts;
-	LOGE(1,"------------- data[0] = %d, linesize[0] = %d, data[1] = %d, linesize[1] = %d, data[2] = %d, linesize[2] = %d",  pFrameRGB->data[0], pFrameRGB->linesize[0],  pFrameRGB->data[1], pFrameRGB->linesize[1],  pFrameRGB->data[2], pFrameRGB->linesize[2]);	
+	//LOGE(1,"------------- data[0] = %d, linesize[0] = %d, data[1] = %d, linesize[1] = %d, data[2] = %d, linesize[2] = %d",  pFrameRGB->data[0], pFrameRGB->linesize[0],  pFrameRGB->data[1], pFrameRGB->linesize[1],  pFrameRGB->data[2], pFrameRGB->linesize[2]);	
 	vp->pict = pFrameRGB;
     if (++is->pictq_windex == VIDEO_PICTURE_QUEUE_SIZE) {
       is->pictq_windex = 0;
@@ -395,7 +380,7 @@ void *decode_thread(void *arg) {
     AVPacket packet;
     while(!is->quit) {
  		if(is->videoq.size > MAX_VIDEOQ_SIZE) {// 
-		   usleep(100000); //50 ms
+		   usleep(10000); //10 ms
 		   continue;
 		}
 		if(av_read_frame(is->pFormatCtx, &packet)<0){
@@ -411,7 +396,7 @@ void *decode_thread(void *arg) {
 		}
     }
 	while (!is->quit) {
-		usleep(100000);
+		usleep(10000);
 	}
 	LOGI(10,"exit\n");
 	return ((void *)0);
@@ -428,20 +413,6 @@ void *video_thread(void *arg) {
   pFrame=avcodec_alloc_frame();
   pFrameRGB=avcodec_alloc_frame();
   int ret;
-  static struct SwsContext *img_convert_ctx;
-  /*
-  AndroidBitmapInfo  info;
-  void* pixels;
-  static struct SwsContext *img_convert_ctx;
-  JNIEnv *env;
-  if((*g_jvm)->AttachCurrentThread(g_jvm,(void **)&env, NULL)<0) {
-		if(debug) LOGE(1,"AttachCurrentThread fail!");
-		return;
-  }
-  if ((ret = AndroidBitmap_getInfo(env, bitmap, &info)) < 0) {
-        LOGE(1,"AndroidBitmap_getInfo() failed ! error=%d", ret);
-        return bitmap_getinfo_error;
-  }*/
   for(;;) {
     if(packet_queue_get(&is->videoq, packet, 1) < 0) {
 	  if(debug) LOGI(10,"video_thread get packet exit");
@@ -452,28 +423,7 @@ void *video_thread(void *arg) {
     len1 = avcodec_decode_video2(is->video_st->codec,
 				pFrame,
 				&frameFinished,
-				packet);
-	//sws_scale(img_convert_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, is->video_st->codec->height, pFrameRGB->data, pFrameRGB->linesize);
-	img_convert_ctx = sws_getContext(gVideoCodecCtx->width,
-				   gVideoCodecCtx->height,
-				   gVideoCodecCtx->pix_fmt,
-				   gVideoCodecCtx->width,
-				   gVideoCodecCtx->height,
-				   PIX_FMT_RGB24,
-				   SWS_BICUBIC,
-				   NULL, NULL, NULL);
-	if(img_convert_ctx == NULL) {
-                    LOGI(10,"could not initialize conversion context\n");
-    }			   
-	sws_scale(img_convert_ctx,
-	      (const uint8_t* const*)pFrame->data,
-	      pFrame->linesize, 0,
-	      is->video_st->codec->height,
-	      pFrameRGB->data,
-	      pFrameRGB->linesize);
-		  
-	LOGE(1,"RRRRRRRRRRRRRR data[0] = %d, linesize[0] = %d, data[1] = %d, linesize[1] = %d, data[2] = %d, linesize[2] = %d",  pFrameRGB->data[0], pFrameRGB->linesize[0],  pFrameRGB->data[1], pFrameRGB->linesize[1],  pFrameRGB->data[2], pFrameRGB->linesize[2]);	
-	
+				packet);	
     if(packet->dts == AV_NOPTS_VALUE
        && pFrame->opaque
        && *(uint64_t*)pFrame->opaque
@@ -487,22 +437,6 @@ void *video_thread(void *arg) {
     pts *= av_q2d(is->video_st->time_base);
     
     if (frameFinished) {
-	   LOGI(10, "#### show pic");
-	   /*
-	   img_convert_ctx = sws_getContext(is->video_st->codec->width, is->video_st->codec->height, 
-                       is->video_st->codec->pix_fmt, 
-                       is->video_st->codec->width, is->video_st->codec->height, PIX_FMT_RGB24, SWS_BICUBIC, 
-                       NULL, NULL, NULL);
-		if(img_convert_ctx == NULL) {
-			LOGI(10,"could not initialize conversion context\n");
-			return;
-		}
-		sws_scale(img_convert_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, is->video_st->codec->height, pFrameRGB->data, pFrameRGB->linesize);
-				
-		// save_frame(pFrameRGB, target_width, target_height, i);
-		fill_bitmap(&info, pixels, pFrameRGB);
-		AndroidBitmap_unlockPixels(env, bitmap);
-		*/
        pts = synchronize_video(is, pFrame, pts);
        if (queue_picture(is, pFrame, pts) < 0) {
 			break;
