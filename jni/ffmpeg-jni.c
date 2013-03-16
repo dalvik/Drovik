@@ -25,25 +25,16 @@ static void fill_bitmap(AndroidBitmapInfo*  info, void *pixels, AVFrame *pFrame)
     int  yy;
     for (yy = 0; yy < info->height; yy++) {
         uint8_t*  line = (uint8_t*)pixels;
-		LOGI(10,"### line = %d", &line);
         frameLine = (uint8_t *)pFrame->data[0] + (yy * pFrame->linesize[0]);
-		LOGI(10,"### frameLine = %d", &frameLine);
         int xx;
-		LOGI(10,"### info->width = %d", info->width);
         for (xx = 0; xx < info->width; xx++) {
             int out_offset = xx * 4;
             int in_offset = xx * 3;
-LOGI(10,"###!!!!!!!!!!!!!!!!!!!!!!");
             line[out_offset] = frameLine[in_offset];
-			LOGI(10,"###11111");
             line[out_offset+1] = frameLine[in_offset+1];
-			LOGI(10,"###222");
             line[out_offset+2] = frameLine[in_offset+2];
-			LOGI(10,"###33333");
             line[out_offset+3] = 0;
-			LOGI(10,"###4444");
         }
-		LOGI(10,"###555");
         pixels = (char*)pixels + info->stride;
     }
 }
@@ -245,6 +236,11 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
 				   PIX_FMT_RGB24,
 				   SWS_BICUBIC,
 				   NULL, NULL, NULL);
+		pFrameRGB=avcodec_alloc_frame();		   
+		int numBytes;
+		numBytes=avpicture_get_size(PIX_FMT_RGB24, pCodecCtx->width, pCodecCtx->height);
+		buffer=(uint8_t *)av_malloc(numBytes*sizeof(uint8_t));
+		avpicture_fill((AVPicture *)pFrameRGB, buffer, PIX_FMT_RGB24, pCodecCtx->width, pCodecCtx->height);
 		pCodec=avcodec_find_decoder(pCodecCtx->codec_id);
 		if(!pCodec) {
 			if(debug)  LOGE(1,"Unsupported audio codec!");
@@ -326,7 +322,7 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 			
 			LOGE(1,"3333 width = %d, height = %d",  info.width, info.height);		
 			//LOGE(1,"444 data[0] = %d, linesize[0] = %d",  pFrameRGB->data[0], pFrameRGB->linesize[0]);
-LOGE(1,"------------- data[0] = %d, linesize[0] = %d, data[1] = %d, linesize[1] = %d, data[2] = %d, linesize[2] = %d",  pFrameRGB->data[0], pFrameRGB->linesize[0],  pFrameRGB->data[1], pFrameRGB->linesize[1],  pFrameRGB->data[2], pFrameRGB->linesize[2]);			
+LOGE(1,"-------wwwwwwwwwwwwww------ data[0] = %d, linesize[0] = %d, data[1] = %d, linesize[1] = %d, data[2] = %d, linesize[2] = %d",  pFrameRGB->data[0], pFrameRGB->linesize[0],  pFrameRGB->data[1], pFrameRGB->linesize[1],  pFrameRGB->data[2], pFrameRGB->linesize[2]);			
 			AndroidBitmap_unlockPixels(env, bitmap);
 			
 			///
@@ -342,11 +338,8 @@ LOGE(1,"------------- data[0] = %d, linesize[0] = %d, data[1] = %d, linesize[1] 
 
 int queue_picture(VideoState *is, AVFrame *pFrame, double pts) {
   VideoPicture *vp;
-  int dst_pix_fmt;
   AVPicture pict;
-  AVFrame *pFrameRGB;
   
-  //pFrameRGB=avcodec_alloc_frame();
   //SDL_LockMutex(is->pictq_mutex);
   pthread_mutex_lock(&is->pictq_mutex);
   while(is->pictq_size>=VIDEO_PICTURE_QUEUE_SIZE &&
@@ -360,52 +353,15 @@ int queue_picture(VideoState *is, AVFrame *pFrame, double pts) {
   if(is->quit) {
     return -1;
   }
-  pFrameRGB=avcodec_alloc_frame();
-  vp = &is->pictq[is->pictq_windex];
- /*
-  if (!vp->bmp ||
-      vp->width != is->video_st->codec->width ||
-      vp->height != is->video_st->codec->height) {
-    //SDL_Event event;
+    vp = &is->pictq[is->pictq_windex];
     
-    vp->allocated = 0;
-    //event.type = FF_ALLOC_EVENT;
-    //event.user.data1 = is;
-    //SDL_PushEvent(&event);
-    
-    //SDL_LockMutex(is->pictq_mutex);
-	pthread_mutex_lock(&is->pictq_mutex);
-    while(!vp->allocated && !is->quit) {
-      //SDL_CondWait(is->pictq_cond, is->pictq_mutex);
-	  pthread_cond_wait(&is->pictq_cond, &is->pictq_mutex);
-    }
-    //SDL_UnlockMutex(is->pictq_mutex);
-	pthread_mutex_unlock(&is->pictq_mutex);
-    if (is->quit) {
-      return -1;
-    }
-  }*/
-  
-  //if (vp->bmp) {
-    //SDL_LockYUVOverlay(vp->bmp);
-    dst_pix_fmt = PIX_FMT_RGB24;
-    //pict.data[0] = vp->bmp->pixels[0];
-    //pict.data[1] = vp->bmp->pixels[2];
-    //pict.data[2] = vp->bmp->pixels[1];
-
-    //pict.linesize[0] = vp->bmp->pitches[0];
-    //pict.linesize[1] = vp->bmp->pitches[2];
-    //pict.linesize[2] = vp->bmp->pitches[1];
-    //
-	LOGE(1,"#### data[0] = %d, linesize[0] = %d, data[1] = %d, linesize[1] = %d, data[2] = %d, linesize[2] = %d",  pFrame->data[0], pFrame->linesize[0],  pFrame->data[1], pFrame->linesize[1],  pFrame->data[2], pFrame->linesize[2]);
     sws_scale(is->img_convert_ctx,
 	      pFrame->data,
 	      pFrame->linesize, 0,
 	      is->video_st->codec->height,
 	      pFrameRGB->data,
 	      pFrameRGB->linesize);
-    //
-    //SDL_UnlockYUVOverlay(vp->bmp);
+    
     vp->pts = pts;
 	LOGE(1,"------------- data[0] = %d, linesize[0] = %d, data[1] = %d, linesize[1] = %d, data[2] = %d, linesize[2] = %d",  pFrameRGB->data[0], pFrameRGB->linesize[0],  pFrameRGB->data[1], pFrameRGB->linesize[1],  pFrameRGB->data[2], pFrameRGB->linesize[2]);	
 	vp->pict = pFrameRGB;
