@@ -28,6 +28,9 @@ const int MAX_VIDEOQ_SIZE = 5 * 256 * 1024;
 
 //int  VIDEO_PICTURE_QUEUE_SIZE = 5;
 #define VIDEO_PICTURE_QUEUE_SIZE 1
+#define AV_SYNC_THRESHOLD 0.01
+#define AV_NOSYNC_THRESHOLD 10.0
+
 
 #ifdef WIN32
 typedef  CRITICAL_SECTION ffmpeg_lock_t;

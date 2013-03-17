@@ -297,6 +297,7 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
         return bitmap_getinfo_error;
 	}
 	VideoPicture *vp;
+	double actual_delay, delay, sync_threshold, ref_clock, diff;
 	while(!is->quit && is->video_st) {
 		if(is->pictq_size == 0) {
 			usleep(10000);
@@ -307,11 +308,35 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 				continue;
 			}
 			// È¡³öÍ¼Ïñ
+			vp = &is->pictq[is->pictq_rindex];
+			delay = vp->pts - is->frame_last_pts;
+			if (delay <= 0 || delay >= 1.0) {
+				delay = is->frame_last_delay;
+			}
+			is->frame_last_delay = delay;
+		    is->frame_last_pts = vp->pts;
+		  
+		    ref_clock = get_audio_clock(is);
+		    diff = vp->pts - ref_clock;
+
+		    sync_threshold = (delay > AV_SYNC_THRESHOLD) ? delay : AV_SYNC_THRESHOLD;
+			if (fabs(diff) < AV_NOSYNC_THRESHOLD) {
+				if (diff <= -sync_threshold) {
+				  delay = 0;
+				} else if (diff >= sync_threshold) {
+				  delay = 2 * delay;
+				}
+		    }
+		    is->frame_timer += delay;
+            actual_delay = is->frame_timer - (av_gettime() / 1000000.0);
+		    if (actual_delay < 0.010) {
+			  actual_delay = 0.010;
+		    }
+			LOGE(10, "### refresh delay =  %d",(int)(actual_delay * 1000 + 0.5));
+			fill_bitmap(&info, pixels, vp->pict);
 			if(++is->pictq_rindex == VIDEO_PICTURE_QUEUE_SIZE) {
 				is->pictq_rindex = 0;
 			}
-			vp = &is->pictq[is->pictq_rindex];
-			fill_bitmap(&info, pixels, vp->pict);
 			pthread_mutex_lock(&is->pictq_mutex);
 			is->pictq_size--;
 			pthread_cond_signal(&is->pictq_cond);
