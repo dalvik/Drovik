@@ -154,6 +154,7 @@ enum {
 int stream_component_open(VideoState *is, int stream_index);
 void *decode_thread(void *arg);
 void *video_thread(void *arg);
+void *audio_thread(void *arg);
 
 void packet_queue_init(PacketQueue *q);
 int packet_queue_put(PacketQueue *q, AVPacket *pkt);

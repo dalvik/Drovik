@@ -296,6 +296,9 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_decodeMedia(JNIEnv * env, jobject
 	pthread_t video;
 	is->video_tid =  pthread_create(&video, NULL, &video_thread, is);
 	if(debug)  LOGE(1,"pthread_create  video_thread");
+	pthread_t audio;
+	pthread_create(&audio, NULL, &audio_thread, is);
+	if(debug)  LOGE(1,"pthread_create  audio_thread");
 	return is->video_tid;
 }
 
@@ -373,7 +376,8 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 int queue_picture(VideoState *is, AVFrame *pFrame, double pts) {
   VideoPicture *vp;
   AVPicture pict;
-  
+  int dst_pix_fmt;
+	
   //SDL_LockMutex(is->pictq_mutex);
   pthread_mutex_lock(&is->pictq_mutex);
   while(is->pictq_size>=VIDEO_PICTURE_QUEUE_SIZE &&
@@ -495,6 +499,34 @@ void *video_thread(void *arg) {
   }
   av_free(pFrame);
   return ((void *)0);
+}
+
+void *audio_thread(void *arg) {
+	VideoState *is = (VideoState*)arg;
+	int len1, audio_size;
+	double pts;
+	int len;
+	while(!is->quit) {
+		if(is->audio_buf_index >= is->audio_buf_size) {
+		   audio_size = audio_decode_frame(is, is->audio_buf, sizeof(is->audio_buf), &pts);
+		   if (audio_size < 0) {
+				is->audio_buf_size = 1024;
+				memset(is->audio_buf, 0, is->audio_buf_size);
+		   } else {
+				is->audio_buf_size = audio_size;
+		   }
+		   is->audio_buf_index = 0;
+		}
+		len1 = is->audio_buf_size - is->audio_buf_index;
+		if(len1 > len) {
+		  len1 = len;
+		}
+		//memcpy(stream, (uint8_t *)is->audio_buf + is->audio_buf_index, len1);
+		len -= len1;
+		//stream += len1;
+		is->audio_buf_index += len1;
+	}
+	((void *)0);
 }
 
 JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_getVideoResolution(JNIEnv *pEnv, jobject pObj) {
