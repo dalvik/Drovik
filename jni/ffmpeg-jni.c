@@ -46,6 +46,7 @@ static int packet_queue_get(PacketQueue *q, AVPacket *pkt, int block) {
 	pthread_mutex_lock(&q->mutex);
 	for(;;) {
 		if(is->quit) {
+			if(debug) LOGE(10,"packet_queue_get over.");
 			ret = -1;
 			break;
 		}
@@ -224,6 +225,9 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
 		if(pFormatCtx->streams[i]->codec->codec_type==AVMEDIA_TYPE_VIDEO && videoStream<0) {
 			videoStream = i;
 		}
+		if(pFormatCtx->streams[i]->codec->codec_type==AVMEDIA_TYPE_AUDIO && audioStream<0) {
+			audioStream = i;
+		}
     }
 	if(videoStream>=0) {
 		pCodecCtx=pFormatCtx->streams[videoStream]->codec;
@@ -265,6 +269,14 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
 			}
 		}
     }
+	if(audioStream>=0) {
+		is->audioStream = audioStream;
+		is->audio_st = pFormatCtx->streams[audioStream];
+		is->audio_buf_size = 0;
+		is->audio_buf_index = 0;
+		memset(&is->audio_pkt, 0, sizeof(is->audio_pkt));
+		packet_queue_init(&is->audioq);
+	}
 	lVideoRes[0] = pCodecCtx->width;
     lVideoRes[1] = pCodecCtx->height;
     lVideoRes[2] = pCodecCtx->time_base.den;
@@ -315,10 +327,8 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 			}
 			is->frame_last_delay = delay;
 		    is->frame_last_pts = vp->pts;
-		  
 		    ref_clock = get_audio_clock(is);
 		    diff = vp->pts - ref_clock;
-
 		    sync_threshold = (delay > AV_SYNC_THRESHOLD) ? delay : AV_SYNC_THRESHOLD;
 			if (fabs(diff) < AV_NOSYNC_THRESHOLD) {
 				if (diff <= -sync_threshold) {
@@ -333,6 +343,7 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 			  actual_delay = 0.010;
 		    }
 			LOGE(10, "### refresh delay =  %d",(int)(actual_delay * 1000 + 0.5));
+			usleep((int)(actual_delay * 1000 + 0.5));
 			fill_bitmap(&info, pixels, vp->pict);
 			if(++is->pictq_rindex == VIDEO_PICTURE_QUEUE_SIZE) {
 				is->pictq_rindex = 0;
@@ -342,8 +353,19 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 			pthread_cond_signal(&is->pictq_cond);
 			pthread_mutex_unlock(&is->pictq_mutex);
 			AndroidBitmap_unlockPixels(env, bitmap);
-			LOGI(1,"refresh");
+			if(mClass == NULL || mObject == NULL || refresh == NULL) {
+				registerCallBackRes = registerCallBack(env);
+				LOGI(10,"registerCallBack == %d", registerCallBackRes);	
+				if(registerCallBackRes != 0) {
+					is->quit = 0;				
+					continue;
+				}
+			}
+			(*env)->CallVoidMethod(env, mObject, refresh, MSG_REFRESH);
 		}
+	}
+	if(registerCallBackRes == 0) {
+		(*env)->CallVoidMethod(env, mObject, refresh, MSG_EXIT);
 	}
 	return 0;
 }
@@ -363,9 +385,11 @@ int queue_picture(VideoState *is, AVFrame *pFrame, double pts) {
   //SDL_UnlockMutex(is->pictq_mutex);
   pthread_mutex_unlock(&is->pictq_mutex);
   if(is->quit) {
+	if(debug) LOGE(10,"### queue_picture exit");
     return -1;
   }
     vp = &is->pictq[is->pictq_windex];
+	dst_pix_fmt = PIX_FMT_RGB24;
     sws_scale(is->img_convert_ctx,
 	      pFrame->data,
 	      pFrame->linesize, 0,
@@ -620,7 +644,7 @@ int registerCallBack(JNIEnv *env) {
 		LOGI(10,"register local object OK.");
 	}
 	if(refresh == NULL) {
-		refresh = (*env)->GetMethodID(env, mClass, "callBackRefresh","()V");
+		refresh = (*env)->GetMethodID(env, mClass, "callBackRefresh","(I)V");
 		if(refresh == NULL) {
 			//(*env)->DeleteLocalRef(env, mClass);
 			//(*env)->DeleteLocalRef(env, mObject);

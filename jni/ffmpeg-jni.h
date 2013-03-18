@@ -31,6 +31,10 @@ const int MAX_VIDEOQ_SIZE = 5 * 256 * 1024;
 #define AV_SYNC_THRESHOLD 0.01
 #define AV_NOSYNC_THRESHOLD 10.0
 
+const int MSG_REFRESH = 1;
+const int MSG_EXIT = 2;
+
+int registerCallBackRes = -1;
 
 #ifdef WIN32
 typedef  CRITICAL_SECTION ffmpeg_lock_t;
