@@ -141,23 +141,26 @@ int audio_decode_frame(VideoState*is, uint8_t *audio_buf, int buf_size, double *
   for (;;) {
     while (is->audio_pkt_size > 0) {
       data_size = buf_size;
-      //len1 = avcodec_decode_audio3(is->audio_st->codec,
-       //                            (int16_t *)audio_buf, 
-       ////                            &data_size,
-       //                            is->audio_pkt_data,
-      //                             is->audio_pkt_size);
+	  LOGI(10,"777");
+      len1 = avcodec_decode_audio3(is->audio_st->codec,
+                                   (int16_t *)audio_buf, 
+                                  &data_size,
+                                   pkt);
+								   LOGI(10,"88888");
       if (len1 < 0) {
-	is->audio_pkt_size = 0;
-	break;
+		is->audio_pkt_size = 0;
+		break;
       }
       is->audio_pkt_data += len1;
       is->audio_pkt_size -= len1;
       if (data_size <= 0) {
-	continue;
+		continue;
       }
+	  LOGI(10,"9999");
       pts = is->audio_clock;
       *pts_ptr = pts;
       n = 2 * is->audio_st->codec->channels;
+	  LOGI(10,"000000");
       is->audio_clock += (double)data_size / (double)(n*is->audio_st->codec->sample_rate);
       return data_size;
     }
@@ -167,12 +170,14 @@ int audio_decode_frame(VideoState*is, uint8_t *audio_buf, int buf_size, double *
     if (is->quit) {
       return -1;
     }
+	LOGI(10,"aaaa");
     if (packet_queue_get(&is->audioq, pkt, 1) < 0) {
       return -1;
     }
     is->audio_pkt_data = pkt->data;
     is->audio_pkt_size = pkt->size;
     if (pkt->pts != AV_NOPTS_VALUE) {
+	LOGI(10,"bbb");
       is->audio_clock = av_q2d(is->audio_st->time_base)*pkt->pts;
     }
   }
@@ -271,7 +276,21 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
     }
 	if(audioStream>=0) {
 		is->audioStream = audioStream;
+		aCodecCtx=pFormatCtx->streams[audioStream]->codec; 
 		is->audio_st = pFormatCtx->streams[audioStream];
+		aCodec = avcodec_find_decoder(aCodecCtx->codec_id);
+		if(!aCodec) {
+			if(debug)  LOGE(1,"Unsupported audio codec!");
+			lVideoRes[0] = unsurpport_codec;
+			(*env)->SetIntArrayRegion(env, videoInfo, 0, 4, lVideoRes);
+			return videoInfo;
+		}
+		if(avcodec_open(aCodecCtx, aCodec)<0){
+			if(debug)  LOGE(1,"Unable to open audio codec");
+			lVideoRes[0] = open_codec_fail;
+			(*env)->SetIntArrayRegion(env, videoInfo, 0, 4, lVideoRes);
+			return videoInfo;
+		}
 		is->audio_buf_size = 0;
 		is->audio_buf_index = 0;
 		memset(&is->audio_pkt, 0, sizeof(is->audio_pkt));
@@ -316,7 +335,7 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 	while(!is->quit && is->video_st) {
 		if(is->pictq_size == 0) {
 			usleep(10000);
-			LOGI(1,"no image, wait.");
+			//LOGI(1,"no image, wait.");
 		} else {
 			if ((ret = AndroidBitmap_lockPixels(env, bitmap, &pixels)) < 0) {
 				LOGE(1,"AndroidBitmap_lockPixels() failed ! error=%d", ret);
@@ -345,7 +364,7 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 		    if (actual_delay < 0.010) {
 			  actual_delay = 0.010;
 		    }
-			LOGE(10, "### refresh delay =  %d",(int)(actual_delay * 1000 + 0.5));
+			//LOGE(10, "### refresh delay =  %d",(int)(actual_delay * 1000 + 0.5));
 			usleep((int)(actual_delay * 1000 + 0.5));
 			fill_bitmap(&info, pixels, vp->pict);
 			if(++is->pictq_rindex == VIDEO_PICTURE_QUEUE_SIZE) {
@@ -508,11 +527,15 @@ void *audio_thread(void *arg) {
 	int len;
 	while(!is->quit) {
 		if(is->audio_buf_index >= is->audio_buf_size) {
+		LOGI(10,"222");
 		   audio_size = audio_decode_frame(is, is->audio_buf, sizeof(is->audio_buf), &pts);
+		   LOGI(10,"333");
 		   if (audio_size < 0) {
 				is->audio_buf_size = 1024;
+				LOGI(10,"444");
 				memset(is->audio_buf, 0, is->audio_buf_size);
 		   } else {
+		   LOGI(10,"555");
 				is->audio_buf_size = audio_size;
 		   }
 		   is->audio_buf_index = 0;
@@ -521,6 +544,7 @@ void *audio_thread(void *arg) {
 		if(len1 > len) {
 		  len1 = len;
 		}
+		LOGI(10,"6666");
 		//memcpy(stream, (uint8_t *)is->audio_buf + is->audio_buf_index, len1);
 		len -= len1;
 		//stream += len1;
