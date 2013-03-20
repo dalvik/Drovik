@@ -23,8 +23,8 @@
 
 #include <pthread.h>
 
-const int MAX_AUDIOQ_SIZE = 5 * 6 * 1024;
-const int MAX_VIDEOQ_SIZE = 5 * 256 * 1024;
+const int MAX_AUDIOQ_SIZE = 6 * 1024;//5 * 6 * 1024;
+const int MAX_VIDEOQ_SIZE = 256 * 1024;//5 * 256 * 1024;
 
 //int  VIDEO_PICTURE_QUEUE_SIZE = 5;
 #define VIDEO_PICTURE_QUEUE_SIZE 1
@@ -71,7 +71,7 @@ typedef struct VideoState {
   double          audio_clock;
   AVStream        *audio_st;
   PacketQueue     audioq;
-  uint8_t         audio_buf[(AVCODEC_MAX_AUDIO_FRAME_SIZE * 3) / 2];
+  int16_t         audio_buf[(AVCODEC_MAX_AUDIO_FRAME_SIZE * 3) / 2];
   unsigned int    audio_buf_size;
   unsigned int    audio_buf_index;
   AVPacket        audio_pkt;
@@ -98,6 +98,8 @@ typedef struct VideoState {
   int             quit;
   struct SwsContext *img_convert_ctx;
   ffmpeg_lock_t 	lock;
+  double video_current_pts;
+  int64_t video_current_pts_time;
 } VideoState;
 
 uint64_t global_video_pkt_pts = AV_NOPTS_VALUE;
