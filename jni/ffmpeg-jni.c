@@ -225,6 +225,7 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
     int audioStream = -1;
 	AVCodec *pCodec;
 	AVCodecContext *pCodecCtx;
+	dump_format(pFormatCtx, 0, is->filename, 0);
 	for (i=0; i<pFormatCtx->nb_streams; i++) {
 		if(pFormatCtx->streams[i]->codec->codec_type==AVMEDIA_TYPE_VIDEO && videoStream<0) {
 			videoStream = i;
@@ -290,6 +291,7 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
 			(*env)->SetIntArrayRegion(env, videoInfo, 0, 4, lVideoRes);
 			return videoInfo;
 		}
+		LOGE(10,"### get audio info : bite_rate= %d, sample_rate = %d, channels = %d, sample_fmt = %d, frame_size = %d",pFormatCtx->streams[audioStream]->codec->bit_rate, pFormatCtx->streams[audioStream]->codec->sample_rate, pFormatCtx->streams[audioStream]->codec->channels, aCodecCtx->sample_fmt,aCodecCtx->frame_size);
 		is->video_current_pts_time = av_gettime();
 		is->audio_buf_size = 0;
 		is->audio_buf_index = 0;
@@ -334,7 +336,7 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 	double actual_delay, delay, sync_threshold, ref_clock, diff;
 	while(!is->quit && is->video_st) {
 		if(is->pictq_size == 0) {
-			usleep(10000);
+			usleep(50000);
 			//LOGI(1,"no image, wait.");
 		} else {
 			if ((ret = AndroidBitmap_lockPixels(env, bitmap, &pixels)) < 0) {
@@ -365,7 +367,7 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 			  actual_delay = 0.010;
 		    }
 			LOGE(10, "### refresh delay =  %d",(int)(actual_delay * 1000 + 0.5));
-			usleep((int)(actual_delay * 1000 + 0.5));
+			usleep(10000*(int)(actual_delay * 1000 + 0.5));
 			fill_bitmap(&info, pixels, vp->pict);
 			if(++is->pictq_rindex == VIDEO_PICTURE_QUEUE_SIZE) {
 				is->pictq_rindex = 0;
@@ -459,14 +461,16 @@ void *decode_thread(void *arg) {
 		   continue;
 		}
 		if(av_read_frame(is->pFormatCtx, &packet)<0){
-			if(url_ferror(pFormatCtx->pb) == 0) {
+			/*if(url_ferror(pFormatCtx->pb) == 0) {
 				usleep(100000);
 				LOGE(10,"------1111");
 				continue;
 			} else {
 				LOGE(10,"------2222");
 				break;
-			}
+			}*/
+			usleep(100000);
+			break;
 		}
   		if(packet.stream_index==is->videoStream) {
 			packet_queue_put(&is->videoq, &packet);
@@ -477,7 +481,7 @@ void *decode_thread(void *arg) {
 		}
     }
 	while (!is->quit) {
-		usleep(10000);
+		usleep(100000);
 	}
 	LOGI(10,"exit\n");
 	return ((void *)0);
@@ -546,7 +550,7 @@ void *audio_thread(void *arg) {
 										 audio_track_cls,
 										"getMinBufferSize",
 										"(III)I");
-	int buffer_size = (*env)->CallStaticIntMethod(env,audio_track_cls,min_buff_size_id, 11025,
+	int buffer_size = (*env)->CallStaticIntMethod(env,audio_track_cls,min_buff_size_id, 44100,
 			    2,			/*CHANNEL_CONFIGURATION_MONO*/
 				2);         /*ENCODING_PCM_16BIT*/
 	LOGI(10,"buffer_size=%i",buffer_size);	
@@ -558,17 +562,15 @@ void *audio_thread(void *arg) {
 	jobject audio_track = (*env)->NewObject(env,audio_track_cls,
 			constructor_id,
 			3, 			  /*AudioManager.STREAM_MUSIC*/
-			11025,        /*sampleRateInHz*/
+			44100,        /*sampleRateInHz*/
 			2,			  /*CHANNEL_CONFIGURATION_MONO*/
 			2,			  /*ENCODING_PCM_16BIT*/
-			buffer_size,  /*bufferSizeInBytes*/
+			buffer_size*10,  /*bufferSizeInBytes*/
 			1			  /*AudioTrack.MODE_STREAM*/
 	);	
 	//setvolume
-	LOGE(10,"setStereoVolume 1");
 	jmethodID setStereoVolume = (*env)->GetMethodID(env,audio_track_cls,"setStereoVolume","(FF)I");
 	(*env)->CallIntMethod(env,audio_track,setStereoVolume,1.0,1.0);
-	LOGE(10, "setStereoVolume 2");
 	//play
     jmethodID method_play = (*env)->GetMethodID(env,audio_track_cls, "play",
 			"()V");
@@ -581,15 +583,13 @@ void *audio_thread(void *arg) {
 		if(is->audio_buf_index >= is->audio_buf_size) {//audio_buf中的数据已经转移完毕了
 		    audio_size = audio_decode_frame(is, is->audio_buf, sizeof(is->audio_buf), &pts);
 		    if (audio_size < 0) {
-				//usleep(1000);
-				//continue;
 				is->audio_buf_size = (AVCODEC_MAX_AUDIO_FRAME_SIZE * 3) / 2;
 				memset(is->audio_buf, 0, is->audio_buf_size);
 		    }else {
 				is->audio_buf_size = audio_size;
 		    } 
 		    //每次解码出音频之后，就把音频的索引audio_buf_index值0 从头开始索引
-		    is->audio_buf_index = 0;			
+		    is->audio_buf_index = 0;	
 		}
 		//剩余的数据长度超过音频数据写入的缓冲区的长度
 		remain = is->audio_buf_size - is->audio_buf_index;
@@ -598,7 +598,7 @@ void *audio_thread(void *arg) {
 		}
 		(*env)->SetByteArrayRegion(env,buffer, 0, remain, (jbyte *)is->audio_buf);
 		(*env)->CallIntMethod(env,audio_track,method_write,buffer,0,remain);
-		//LOGI(10,"ttt audio_buf_index = %d, audio_buf_size = %d,len1 = %d, len = %d", is->audio_buf_index,is->audio_buf_size, len1, len);
+		LOGI(10,"ttt audio_buf_index = %d, audio_buf_size = %d,remain = %d, clock = %d", is->audio_buf_index,is->audio_buf_size, remain, is->audio_clock);
 		//len -= len1;
 		is->audio_buf_index += remain;	
 	}

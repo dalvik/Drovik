@@ -23,13 +23,13 @@
 
 #include <pthread.h>
 
-const int MAX_AUDIOQ_SIZE = 6 * 1024;//5 * 6 * 1024;
-const int MAX_VIDEOQ_SIZE = 256 * 1024;//5 * 256 * 1024;
+const int MAX_AUDIOQ_SIZE = 5 * 6 * 1024;
+const int MAX_VIDEOQ_SIZE = 5 * 256 * 1024;
 
 //int  VIDEO_PICTURE_QUEUE_SIZE = 5;
 #define VIDEO_PICTURE_QUEUE_SIZE 1
-#define AV_SYNC_THRESHOLD 0.01
-#define AV_NOSYNC_THRESHOLD 10.0
+#define AV_SYNC_THRESHOLD 10.0//0.01
+#define AV_NOSYNC_THRESHOLD 10000.0//10.0
 
 const int MSG_REFRESH = 1;
 const int MSG_EXIT = 2;
