@@ -122,8 +122,6 @@ double get_video_clock(VideoState *is) {
 	return is->video_current_pts + delta;
 }
 
-
-
 double get_audio_clock(VideoState *is) {
 	double pts;
 	int hw_buf_size, bytes_per_sec, n;
@@ -539,9 +537,9 @@ void *audio_thread(void *arg) {
 		return ((void *)-1);;
 	}
 	VideoState *is = (VideoState*)arg;
-	int len1, audio_size;//len1 解码出的音频缓冲区剩余的数据长度
+	int remain, audio_size;//remain 解码出的音频缓冲区剩余的数据长度
 	double pts;
-	int len;//音频数据写入的缓冲区的长度
+	int pcmBufferLen;//音频数据写入的缓冲区的长度
 	jclass audio_track_cls = (*env)->FindClass(env,"android/media/AudioTrack");
 	jmethodID min_buff_size_id = (*env)->GetStaticMethodID(
 										 env,
@@ -552,9 +550,9 @@ void *audio_thread(void *arg) {
 			    2,			/*CHANNEL_CONFIGURATION_MONO*/
 				2);         /*ENCODING_PCM_16BIT*/
 	LOGI(10,"buffer_size=%i",buffer_size);	
-	len = buffer_size/4;
-	jbyteArray buffer = (*env)->NewByteArray(env,len);
-	char buf[len];
+	pcmBufferLen = buffer_size/4;
+	jbyteArray buffer = (*env)->NewByteArray(env,pcmBufferLen);
+	char buf[pcmBufferLen];
 	jmethodID constructor_id = (*env)->GetMethodID(env,audio_track_cls, "<init>",
 			"(IIIIII)V");
 	jobject audio_track = (*env)->NewObject(env,audio_track_cls,
@@ -580,29 +578,29 @@ void *audio_thread(void *arg) {
 	//release
 	jmethodID method_release = (*env)->GetMethodID(env,audio_track_cls,"release","()V");
 	while(!is->quit) {
-		//if(is->audio_buf_index >= is->audio_buf_size) {//audio_buf中的数据已经转移完毕了
+		if(is->audio_buf_index >= is->audio_buf_size) {//audio_buf中的数据已经转移完毕了
 		    audio_size = audio_decode_frame(is, is->audio_buf, sizeof(is->audio_buf), &pts);
 		    if (audio_size < 0) {
-				usleep(1000);
-				continue;
-			//	is->audio_buf_size = (AVCODEC_MAX_AUDIO_FRAME_SIZE * 3) / 2;
-			//	memset(is->audio_buf, 0, is->audio_buf_size);
-		    }//else {
-		//		is->audio_buf_size = audio_size;
-		 //   } 
+				//usleep(1000);
+				//continue;
+				is->audio_buf_size = (AVCODEC_MAX_AUDIO_FRAME_SIZE * 3) / 2;
+				memset(is->audio_buf, 0, is->audio_buf_size);
+		    }else {
+				is->audio_buf_size = audio_size;
+		    } 
 		    //每次解码出音频之后，就把音频的索引audio_buf_index值0 从头开始索引
-		//    is->audio_buf_index = 0;			
-		//}
+		    is->audio_buf_index = 0;			
+		}
 		//剩余的数据长度超过音频数据写入的缓冲区的长度
-		//len1 = is->audio_buf_size - is->audio_buf_index;
-		//if(len1 > len) {
-		//  len1 = len;
-		//}
-		(*env)->SetByteArrayRegion(env,buffer, 0, audio_size, (jbyte *)is->audio_buf);
-		(*env)->CallIntMethod(env,audio_track,method_write,buffer,0,audio_size);
+		remain = is->audio_buf_size - is->audio_buf_index;
+		if(remain > pcmBufferLen) {
+		  remain = pcmBufferLen;
+		}
+		(*env)->SetByteArrayRegion(env,buffer, 0, remain, (jbyte *)is->audio_buf);
+		(*env)->CallIntMethod(env,audio_track,method_write,buffer,0,remain);
 		//LOGI(10,"ttt audio_buf_index = %d, audio_buf_size = %d,len1 = %d, len = %d", is->audio_buf_index,is->audio_buf_size, len1, len);
 		//len -= len1;
-		//is->audio_buf_index += len1;	
+		is->audio_buf_index += remain;	
 	}
 	(*env)->CallVoidMethod(env,audio_track, method_release);
 	if(debug) LOGI(1, "### decode audio thread exit.");
