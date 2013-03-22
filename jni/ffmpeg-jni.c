@@ -298,7 +298,7 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
 
 		/* put sample parameters */    
 		aCodecCtx->bit_rate = pFormatCtx->streams[audioStream]->codec->bit_rate;       
-		aCodecCtx->sample_rate = pFormatCtx->streams[audioStream]->codec->sample_rate;       
+		frequency = pFormatCtx->streams[audioStream]->codec->sample_rate;       
 		aCodecCtx->channels = pFormatCtx->streams[audioStream]->codec->channels;
 
 		is->video_current_pts_time = av_gettime();
@@ -560,8 +560,8 @@ void *audio_thread(void *arg) {
 										 audio_track_cls,
 										"getMinBufferSize",
 										"(III)I");
-	int buffer_size = (*env)->CallStaticIntMethod(env,audio_track_cls,min_buff_size_id, 44100,
-			    2,			/*CHANNEL_CONFIGURATION_MONO*/
+	int buffer_size = (*env)->CallStaticIntMethod(env,audio_track_cls,min_buff_size_id, 		frequency,
+			    12,			/*CHANNEL_IN_STEREO*/
 				2);         /*ENCODING_PCM_16BIT*/
 	LOGI(10,"buffer_size=%i",buffer_size);	
 	pcmBufferLen = (AVCODEC_MAX_AUDIO_FRAME_SIZE * 3) / 2;
@@ -571,8 +571,8 @@ void *audio_thread(void *arg) {
 	jobject audio_track = (*env)->NewObject(env,audio_track_cls,
 			constructor_id,
 			3, 			  /*AudioManager.STREAM_MUSIC*/
-			44100,        /*sampleRateInHz*/
-			2,			  /*CHANNEL_CONFIGURATION_MONO*/
+			frequency,        /*sampleRateInHz*/
+			12,			  /*CHANNEL_IN_STEREO*/
 			2,			  /*ENCODING_PCM_16BIT*/
 			buffer_size*10,  /*bufferSizeInBytes*/
 			1			  /*AudioTrack.MODE_STREAM*/
@@ -605,12 +605,12 @@ void *audio_thread(void *arg) {
 		if(remain > pcmBufferLen) {
 		  remain = pcmBufferLen;
 		}
-		(*env)->SetByteArrayRegion(env,buffer, 0, out_size, (jbyte *)is->audio_buf);
+		(*env)->SetByteArrayRegion(env,buffer, 0, remain, (jbyte *)is->audio_buf);
 
 		(*env)->CallIntMethod(env,audio_track,method_write,buffer,0,remain);
-		LOGI(10,"ttt audio_buf_index = %d, audio_buf_size = %d,remain = %d, clock = %d", is->audio_buf_index,is->audio_buf_size, remain, is->audio_clock);
+		//LOGI(10,"ttt audio_buf_index = %d, audio_buf_size = %d,remain = %d, clock = %d", is->audio_buf_index,is->audio_buf_size, remain, is->audio_clock);
 
-		(*env)->CallIntMethod(env,audio_track,method_write,buffer,0,out_size);
+		//(*env)->CallIntMethod(env,audio_track,method_write,buffer,0,out_size);
 		//LOGI(10,"ttt audio_buf_index = %d, audio_buf_size = %d,len1 = %d, len = %d", is->audio_buf_index,is->audio_buf_size, len1, len);
 
 		//len -= len1;
