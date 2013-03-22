@@ -606,8 +606,13 @@ void *audio_thread(void *arg) {
 		  remain = pcmBufferLen;
 		}
 		(*env)->SetByteArrayRegion(env,buffer, 0, out_size, (jbyte *)is->audio_buf);
+
 		(*env)->CallIntMethod(env,audio_track,method_write,buffer,0,remain);
 		LOGI(10,"ttt audio_buf_index = %d, audio_buf_size = %d,remain = %d, clock = %d", is->audio_buf_index,is->audio_buf_size, remain, is->audio_clock);
+
+		(*env)->CallIntMethod(env,audio_track,method_write,buffer,0,out_size);
+		//LOGI(10,"ttt audio_buf_index = %d, audio_buf_size = %d,len1 = %d, len = %d", is->audio_buf_index,is->audio_buf_size, len1, len);
+
 		//len -= len1;
 		is->audio_buf_index += remain;	
 	}
