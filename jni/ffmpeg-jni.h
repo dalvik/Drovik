@@ -35,6 +35,7 @@ const int MSG_REFRESH = 1;
 const int MSG_EXIT = 2;
 
 int registerCallBackRes = -1;
+int out_size = AVCODEC_MAX_AUDIO_FRAME_SIZE*10;  
 
 #ifdef WIN32
 typedef  CRITICAL_SECTION ffmpeg_lock_t;
@@ -71,7 +72,7 @@ typedef struct VideoState {
   double          audio_clock;
   AVStream        *audio_st;
   PacketQueue     audioq;
-  int16_t         audio_buf[(AVCODEC_MAX_AUDIO_FRAME_SIZE * 3) / 2];
+  int16_t         *audio_buf;
   unsigned int    audio_buf_size;
   unsigned int    audio_buf_index;
   AVPacket        audio_pkt;

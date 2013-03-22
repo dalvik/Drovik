@@ -145,7 +145,7 @@ int audio_decode_frame(VideoState*is, int16_t *audio_buf, int buf_size, double *
   double pts;  
   for (;;) {
     while (is->audio_pkt_size > 0) {
-      data_size = buf_size;
+      data_size = AVCODEC_MAX_AUDIO_FRAME_SIZE*10;
       len1 = avcodec_decode_audio3(is->audio_st->codec,
                                    audio_buf, 
                                   &data_size,
@@ -279,6 +279,7 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
 		aCodecCtx=pFormatCtx->streams[audioStream]->codec; 
 		is->audio_st = pFormatCtx->streams[audioStream];
 		aCodec = avcodec_find_decoder(aCodecCtx->codec_id);
+		 
 		if(!aCodec) {
 			if(debug)  LOGE(1,"Unsupported audio codec!");
 			lVideoRes[0] = unsurpport_codec;
@@ -291,8 +292,16 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
 			(*env)->SetIntArrayRegion(env, videoInfo, 0, 4, lVideoRes);
 			return videoInfo;
 		}
+
 		LOGE(10,"### get audio info : bite_rate= %d, sample_rate = %d, channels = %d, sample_fmt = %d, frame_size = %d",pFormatCtx->streams[audioStream]->codec->bit_rate, pFormatCtx->streams[audioStream]->codec->sample_rate, pFormatCtx->streams[audioStream]->codec->channels, aCodecCtx->sample_fmt,aCodecCtx->frame_size);
+
+		/* put sample parameters */    
+		aCodecCtx->bit_rate = pFormatCtx->streams[audioStream]->codec->bit_rate;       
+		aCodecCtx->sample_rate = pFormatCtx->streams[audioStream]->codec->sample_rate;       
+		aCodecCtx->channels = pFormatCtx->streams[audioStream]->codec->channels;
+
 		is->video_current_pts_time = av_gettime();
+		is->audio_buf = (int16_t *)av_malloc(out_size); 
 		is->audio_buf_size = 0;
 		is->audio_buf_index = 0;
 		memset(&is->audio_pkt, 0, sizeof(is->audio_pkt));
@@ -554,9 +563,8 @@ void *audio_thread(void *arg) {
 			    2,			/*CHANNEL_CONFIGURATION_MONO*/
 				2);         /*ENCODING_PCM_16BIT*/
 	LOGI(10,"buffer_size=%i",buffer_size);	
-	pcmBufferLen = buffer_size/4;
+	pcmBufferLen = (AVCODEC_MAX_AUDIO_FRAME_SIZE * 3) / 2;
 	jbyteArray buffer = (*env)->NewByteArray(env,pcmBufferLen);
-	char buf[pcmBufferLen];
 	jmethodID constructor_id = (*env)->GetMethodID(env,audio_track_cls, "<init>",
 			"(IIIIII)V");
 	jobject audio_track = (*env)->NewObject(env,audio_track_cls,
@@ -596,7 +604,7 @@ void *audio_thread(void *arg) {
 		if(remain > pcmBufferLen) {
 		  remain = pcmBufferLen;
 		}
-		(*env)->SetByteArrayRegion(env,buffer, 0, remain, (jbyte *)is->audio_buf);
+		(*env)->SetByteArrayRegion(env,buffer, 0, out_size, (jbyte *)is->audio_buf);
 		(*env)->CallIntMethod(env,audio_track,method_write,buffer,0,remain);
 		LOGI(10,"ttt audio_buf_index = %d, audio_buf_size = %d,remain = %d, clock = %d", is->audio_buf_index,is->audio_buf_size, remain, is->audio_clock);
 		//len -= len1;
