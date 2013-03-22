@@ -293,6 +293,7 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
 			return videoInfo;
 		}
 
+
 		LOGE(10,"### get audio info : bite_rate= %d, sample_rate = %d, channels = %d, sample_fmt = %d, frame_size = %d",pFormatCtx->streams[audioStream]->codec->bit_rate, pFormatCtx->streams[audioStream]->codec->sample_rate, pFormatCtx->streams[audioStream]->codec->channels, aCodecCtx->sample_fmt,aCodecCtx->frame_size);
 
 		/* put sample parameters */    
