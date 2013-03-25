@@ -22,7 +22,14 @@
 #include <libavcodec/avfft.h>
 
 #include <pthread.h>
+#define __STDC_CONSTANT_MACROS
+#ifndef   UINT64_C
+#define   UINT64_C(value)__CONCAT(value,ULL)
+#endif
 
+#ifndef   INT64_C
+#define   INT64_C(value)__CONCAT(value,ULL)
+#endif
 const int MAX_AUDIOQ_SIZE = 5 * 6 * 1024;
 const int MAX_VIDEOQ_SIZE = 5 * 256 * 1024;
 

@@ -1125,7 +1125,7 @@ $(AVCODEC_SRC_FILES) \
 $(AVCODEC_ARM_SRC_FILES) \
 $(AVFORMAT_SRC_FILES)
  
-LOCAL_SRC_FILES += ffmpeg-jni.c
+LOCAL_SRC_FILES += ffmpeg-jni.cpp
 
 LOCAL_LDLIBS := -L$(NDK_PLATFORMS_ROOT)/$(TARGET_PLATFORM)/arch-arm/usr/lib -L$(LOCAL_PATH) -lswscale -llog -ljnigraphics -lz -lm -ldl -lgcc 
 
