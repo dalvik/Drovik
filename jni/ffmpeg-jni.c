@@ -346,7 +346,7 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 	double actual_delay, delay, sync_threshold, ref_clock, diff;
 	while(!is->quit && is->video_st) {
 		if(is->pictq_size == 0) {
-			usleep(50000);
+			usleep(1000);
 			//LOGI(1,"no image, wait.");
 		} else {
 			if ((ret = AndroidBitmap_lockPixels(env, bitmap, &pixels)) < 0) {
@@ -376,8 +376,8 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 		    if (actual_delay < 0.010) {
 			  actual_delay = 0.010;
 		    }
-			LOGE(10, "### refresh delay =  %d",(int)(actual_delay * 1000 + 0.5));
-			usleep(10000*(int)(actual_delay * 1000 + 0.5));
+			LOGE(10, "### refresh delay =  %d",(int)(actual_delay * 1000000 + 500));
+			usleep((int)(actual_delay * 1000000 + 500));
 			fill_bitmap(&info, pixels, vp->pict);
 			if(++is->pictq_rindex == VIDEO_PICTURE_QUEUE_SIZE) {
 				is->pictq_rindex = 0;
@@ -413,8 +413,6 @@ int queue_picture(VideoState *is, AVFrame *pFrame, double pts) {
   pthread_mutex_lock(&is->pictq_mutex);
   while(is->pictq_size>=VIDEO_PICTURE_QUEUE_SIZE &&
 	!is->quit) {
-    //SDL_CondWait(is->pictq_cond, is->pictq_mutex);
-	if(debug) LOGE(10, "picture is full");
 	pthread_cond_wait(&is->pictq_cond, &is->pictq_mutex);
   }
   //SDL_UnlockMutex(is->pictq_mutex);
@@ -431,8 +429,7 @@ int queue_picture(VideoState *is, AVFrame *pFrame, double pts) {
 	      is->video_st->codec->height,
 	      pFrameRGB->data,
 	      pFrameRGB->linesize);
-    vp->pts = pts;
-	//LOGE(1,"------------- data[0] = %d, linesize[0] = %d, data[1] = %d, linesize[1] = %d, data[2] = %d, linesize[2] = %d",  pFrameRGB->data[0], pFrameRGB->linesize[0],  pFrameRGB->data[1], pFrameRGB->linesize[1],  pFrameRGB->data[2], pFrameRGB->linesize[2]);	
+    vp->pts = pts;	
 	vp->pict = pFrameRGB;
     if (++is->pictq_windex == VIDEO_PICTURE_QUEUE_SIZE) {
       is->pictq_windex = 0;
@@ -442,7 +439,6 @@ int queue_picture(VideoState *is, AVFrame *pFrame, double pts) {
     is->pictq_size ++;
     //SDL_UnlockMutex(is->pictq_mutex);
 	pthread_mutex_unlock(&is->pictq_mutex);
- // }
   return 0;
 }
 
