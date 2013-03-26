@@ -184,10 +184,10 @@ int audio_decode_frame(VideoState*is, int16_t *audio_buf, int buf_size, double *
 }
 
 
-JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(JNIEnv * env, jobject this,jstring name, jint d) { 
+extern "C" jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(JNIEnv * env, jobject obj,jstring name, jint d) { 
 	jintArray videoInfo;
 	int arrLen = 4;
-    videoInfo = (*env)->NewIntArray(env, arrLen);
+    videoInfo = env->NewIntArray(arrLen);
     if (videoInfo == NULL) {
         if(debug)LOGI(1, "cannot allocate memory for video size");
         return NULL;
@@ -196,28 +196,28 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
     int ret;
 	debug = d;
     
-	(*env)->GetJavaVM(env, &g_jvm);
-	g_obj = (*env)->NewGlobalRef(env,g_obj);
-	is = av_mallocz(sizeof(VideoState));
+	env->GetJavaVM(&g_jvm);
+	g_obj = env->NewGlobalRef(g_obj);
+	is = (VideoState*)av_mallocz(sizeof(VideoState));
 	av_register_all();
-    gFileName = (char *)(*env)->GetStringUTFChars(env, name, NULL);
+    gFileName = (char *)env->GetStringUTFChars( name, NULL);
 	//is->pictq_mutex = SDL_CreateMutex();
 	//is->pictq_cond = SDL_CreateCond();
 	pthread_mutex_init(&is->pictq_mutex, NULL);
-	pthread_mutex_init(&is->pictq_cond, NULL);
+	pthread_cond_init(&is->pictq_cond, NULL);
 	
 	AVFormatContext *pFormatCtx;
 	if(av_open_input_file(&pFormatCtx,gFileName , NULL, 0, NULL)!=0) {
 		if(debug) LOGI(10,"Couldn't open file");
 		lVideoRes[0] = open_file_fail;
-		(*env)->SetIntArrayRegion(env, videoInfo, 0, 4, lVideoRes);
+		env->SetIntArrayRegion(videoInfo, 0, 4, lVideoRes);
 		return videoInfo;
     }
 	is->pFormatCtx = pFormatCtx;    
     if(av_find_stream_info(pFormatCtx)<0) {
 		if(debug) LOGI(10,"Unable to get stream info");
 		lVideoRes[0] = get_stream_info_fail;
-		(*env)->SetIntArrayRegion(env, videoInfo, 0, 4, lVideoRes);
+		env->SetIntArrayRegion(videoInfo, 0, 4, lVideoRes);
 		return videoInfo;
     }
 	int i;
@@ -256,13 +256,13 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
 		if(!pCodec) {
 			if(debug)  LOGE(1,"Unsupported audio codec!");
 			lVideoRes[0] = unsurpport_codec;
-			(*env)->SetIntArrayRegion(env, videoInfo, 0, 4, lVideoRes);
+			env->SetIntArrayRegion(videoInfo, 0, 4, lVideoRes);
 			return videoInfo;
 		}else {
 			if(avcodec_open(pCodecCtx, pCodec)<0){
 				if(debug)  LOGE(1,"Unable to open audio codec");
 				lVideoRes[0] = open_codec_fail;
-				(*env)->SetIntArrayRegion(env, videoInfo, 0, 4, lVideoRes);
+				env->SetIntArrayRegion(videoInfo, 0, 4, lVideoRes);
 				return videoInfo;
 			} else {
 				is->videoStream = videoStream;
@@ -285,17 +285,15 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
 		if(!aCodec) {
 			if(debug)  LOGE(1,"Unsupported audio codec!");
 			lVideoRes[0] = unsurpport_codec;
-			(*env)->SetIntArrayRegion(env, videoInfo, 0, 4, lVideoRes);
+			env->SetIntArrayRegion(videoInfo, 0, 4, lVideoRes);
 			return videoInfo;
 		}
 		if(avcodec_open(aCodecCtx, aCodec)<0){
 			if(debug)  LOGE(1,"Unable to open audio codec");
 			lVideoRes[0] = open_codec_fail;
-			(*env)->SetIntArrayRegion(env, videoInfo, 0, 4, lVideoRes);
+			env->SetIntArrayRegion(videoInfo, 0, 4, lVideoRes);
 			return videoInfo;
 		}
-
-
 		LOGE(10,"### get audio info : bite_rate= %d, sample_rate = %d, channels = %d, sample_fmt = %d, frame_size = %d",pFormatCtx->streams[audioStream]->codec->bit_rate, pFormatCtx->streams[audioStream]->codec->sample_rate, pFormatCtx->streams[audioStream]->codec->channels, aCodecCtx->sample_fmt,aCodecCtx->frame_size);
 
 		/* put sample parameters */    
@@ -315,12 +313,12 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
     lVideoRes[2] = pCodecCtx->time_base.den;
     lVideoRes[3] = pCodecCtx->time_base.num;
     //LOGI(1, "time den  = %d,num  = %d, video duration = %d,",pCodecCtx->time_base.num,pCodecCtx->time_base.den, pCodecCtx->bit_rate);
-	(*env)->SetIntArrayRegion(env, videoInfo, 0, 4, lVideoRes);
+	env->SetIntArrayRegion(videoInfo, 0, 4, lVideoRes);
 	return  videoInfo;
 }
  
 
-int Java_com_sky_drovik_player_ffmpeg_JniUtils_decodeMedia(JNIEnv * env, jobject this, jstring rect)
+extern "C" int Java_com_sky_drovik_player_ffmpeg_JniUtils_decodeMedia(JNIEnv * env, jobject thiz, jstring rect)
 {
 	int ret;
 	pthread_t decode;
@@ -336,7 +334,7 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_decodeMedia(JNIEnv * env, jobject
 	return is->video_tid;
 }
 
-int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject this, jstring bitmap)
+extern "C" int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thiz, jstring bitmap)
 {
 	AndroidBitmapInfo  info;
 	void*              pixels;
@@ -381,7 +379,7 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 		    }
 			LOGE(10, "### refresh delay =  %d",(int)(actual_delay * 1000000 + 500));
 			usleep((int)(actual_delay * 1000000 + 500));
-			fill_bitmap(&info, pixels, vp->pict);
+			fill_bitmap(&info, pixels, (AVFrame*)vp->pict);
 			if(++is->pictq_rindex == VIDEO_PICTURE_QUEUE_SIZE) {
 				is->pictq_rindex = 0;
 			}
@@ -398,11 +396,11 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 					continue;
 				}
 			}
-			(*env)->CallVoidMethod(env, mObject, refresh, MSG_REFRESH);
+			env->CallVoidMethod(mObject, refresh, MSG_REFRESH);
 		}
 	}
 	if(registerCallBackRes == 0) {
-		(*env)->CallVoidMethod(env, mObject, refresh, MSG_EXIT);
+		env->CallVoidMethod(mObject, refresh, MSG_EXIT);
 	}
 	return 0;
 }
@@ -433,7 +431,7 @@ int queue_picture(VideoState *is, AVFrame *pFrame, double pts) {
 	      pFrameRGB->data,
 	      pFrameRGB->linesize);
     vp->pts = pts;	
-	vp->pict = pFrameRGB;
+	vp->pict = (AVPicture*)pFrameRGB;
     if (++is->pictq_windex == VIDEO_PICTURE_QUEUE_SIZE) {
       is->pictq_windex = 0;
     }
@@ -544,30 +542,29 @@ void *video_thread(void *arg) {
 
 void *audio_thread(void *arg) {
 	JNIEnv* env; 
-	if((*g_jvm)->AttachCurrentThread(g_jvm, (void**)&env, NULL) != JNI_OK) 
+	if(g_jvm->AttachCurrentThread(&env, NULL) != JNI_OK) 
 	{
-		LOGE("%s: AttachCurrentThread() failed", __FUNCTION__);
+		//LOGE("%s: AttachCurrentThread() failed", __FUNCTION__);
 		return ((void *)-1);;
 	}
 	VideoState *is = (VideoState*)arg;
 	int remain, audio_size;//remain 解码出的音频缓冲区剩余的数据长度
 	double pts;
 	int pcmBufferLen;//音频数据写入的缓冲区的长度
-	jclass audio_track_cls = (*env)->FindClass(env,"android/media/AudioTrack");
-	jmethodID min_buff_size_id = (*env)->GetStaticMethodID(
-										 env,
+	jclass audio_track_cls = env->FindClass("android/media/AudioTrack");
+	jmethodID min_buff_size_id = env->GetStaticMethodID(								
 										 audio_track_cls,
 										"getMinBufferSize",
 										"(III)I");
-	int buffer_size = (*env)->CallStaticIntMethod(env,audio_track_cls,min_buff_size_id, 		frequency,
+	int buffer_size = env->CallStaticIntMethod(audio_track_cls,min_buff_size_id, 		frequency,
 			    12,			/*CHANNEL_IN_STEREO*/
 				2);         /*ENCODING_PCM_16BIT*/
 	LOGI(10,"buffer_size=%i",buffer_size);	
 	pcmBufferLen = (AVCODEC_MAX_AUDIO_FRAME_SIZE * 3) / 2;
-	jbyteArray buffer = (*env)->NewByteArray(env,pcmBufferLen);
-	jmethodID constructor_id = (*env)->GetMethodID(env,audio_track_cls, "<init>",
+	jbyteArray buffer = env->NewByteArray(pcmBufferLen);
+	jmethodID constructor_id = env->GetMethodID(audio_track_cls, "<init>",
 			"(IIIIII)V");
-	jobject audio_track = (*env)->NewObject(env,audio_track_cls,
+	jobject audio_track = env->NewObject(audio_track_cls,
 			constructor_id,
 			3, 			  /*AudioManager.STREAM_MUSIC*/
 			frequency,        /*sampleRateInHz*/
@@ -577,16 +574,16 @@ void *audio_thread(void *arg) {
 			1			  /*AudioTrack.MODE_STREAM*/
 	);	
 	//setvolume
-	jmethodID setStereoVolume = (*env)->GetMethodID(env,audio_track_cls,"setStereoVolume","(FF)I");
-	(*env)->CallIntMethod(env,audio_track,setStereoVolume,1.0,1.0);
+	jmethodID setStereoVolume = env->GetMethodID(audio_track_cls,"setStereoVolume","(FF)I");
+	env->CallIntMethod(audio_track,setStereoVolume,1.0,1.0);
 	//play
-    jmethodID method_play = (*env)->GetMethodID(env,audio_track_cls, "play",
+    jmethodID method_play = env->GetMethodID(audio_track_cls, "play",
 			"()V");
-    (*env)->CallVoidMethod(env,audio_track, method_play);
+    env->CallVoidMethod(audio_track, method_play);
     //write
-    jmethodID method_write = (*env)->GetMethodID(env,audio_track_cls,"write","([BII)I");
+    jmethodID method_write = env->GetMethodID(audio_track_cls,"write","([BII)I");
 	//release
-	jmethodID method_release = (*env)->GetMethodID(env,audio_track_cls,"release","()V");
+	jmethodID method_release = env->GetMethodID(audio_track_cls,"release","()V");
 	while(!is->quit) {
 		if(is->audio_buf_index >= is->audio_buf_size) {//audio_buf中的数据已经转移完毕了
 		    audio_size = audio_decode_frame(is, is->audio_buf, sizeof(is->audio_buf), &pts);
@@ -604,9 +601,9 @@ void *audio_thread(void *arg) {
 		if(remain > pcmBufferLen) {
 		  remain = pcmBufferLen;
 		}
-		(*env)->SetByteArrayRegion(env,buffer, 0, remain, (jbyte *)is->audio_buf);
+		env->SetByteArrayRegion(buffer, 0, remain, (jbyte *)is->audio_buf);
 
-		(*env)->CallIntMethod(env,audio_track,method_write,buffer,0,remain);
+		env->CallIntMethod(audio_track,method_write,buffer,0,remain);
 		//LOGI(10,"ttt audio_buf_index = %d, audio_buf_size = %d,remain = %d, clock = %d", is->audio_buf_index,is->audio_buf_size, remain, is->audio_clock);
 
 		//(*env)->CallIntMethod(env,audio_track,method_write,buffer,0,out_size);
@@ -615,14 +612,14 @@ void *audio_thread(void *arg) {
 		//len -= len1;
 		is->audio_buf_index += remain;	
 	}
-	(*env)->CallVoidMethod(env,audio_track, method_release);
+	env->CallVoidMethod(audio_track, method_release);
 	if(debug) LOGI(1, "### decode audio thread exit.");
 	((void *)0);
 }
 
-JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_getVideoResolution(JNIEnv *pEnv, jobject pObj) {
+extern "C" jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_getVideoResolution(JNIEnv *pEnv, jobject pObj) {
     jintArray lRes;
-    lRes = (*pEnv)->NewIntArray(pEnv, 4);
+    lRes = pEnv->NewIntArray(4);
     if (lRes == NULL) {
         LOGI(1, "cannot allocate memory for video size");
         return NULL;
@@ -633,82 +630,19 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_getVideoR
     lVideoRes[2] = 1;//pCodecCtx->time_base.den;
     lVideoRes[3] = 1;//pCodecCtx->time_base.num;
     //LOGI(1, "time den  = %d,num  = %d, video duration = %d,",pCodecCtx->time_base.num,pCodecCtx->time_base.den, pCodecCtx->bit_rate);
-    (*pEnv)->SetIntArrayRegion(pEnv, lRes, 0, 4, lVideoRes);
+    pEnv->SetIntArrayRegion(lRes, 0, 4, lVideoRes);
     return lRes;
 }
 
 void packet_queue_init(PacketQueue *q) {
 	memset(q, 0, sizeof(PacketQueue));
 	pthread_mutex_init(&q->mutex, NULL);
-	pthread_mutex_init(&q->cond, NULL);
+	pthread_cond_init(&q->cond, NULL);
 }
 
-/*parsing the video file, done by parse thread*/
-static void get_video_info(char *prFilename) {
-    AVCodec *lVideoCodec;
-    int lError;
-    /*some global variables initialization*/
-    LOGI(10, "get video info starts!");
-    /*register the codec*/
-    extern AVCodec ff_h263_decoder;
-    avcodec_register(&ff_h263_decoder);
-    extern AVCodec ff_h264_decoder;
-    avcodec_register(&ff_h264_decoder);
-    extern AVCodec ff_mpeg4_decoder;
-    avcodec_register(&ff_mpeg4_decoder);
-    extern AVCodec ff_mjpeg_decoder;
-    avcodec_register(&ff_mjpeg_decoder);
-    /*register parsers*/
-    //extern AVCodecParser ff_h264_parser;
-    //av_register_codec_parser(&ff_h264_parser);
-    //extern AVCodecParser ff_mpeg4video_parser;
-    //av_register_codec_parser(&ff_mpeg4video_parser);
-    /*register demux*/
-    extern AVInputFormat ff_mov_demuxer;
-    av_register_input_format(&ff_mov_demuxer);
-    //extern AVInputFormat ff_h264_demuxer;
-    //av_register_input_format(&ff_h264_demuxer);
-    /*register the protocol*/
-    extern URLProtocol ff_file_protocol;
-    av_register_protocol2(&ff_file_protocol, sizeof(ff_file_protocol));
-    /*open the video file*/
-    if ((lError = av_open_input_file(&gFormatCtx, gFileName, NULL, 0, NULL)) !=0 ) {
-        LOGE(1, "Error open video file: %d", lError);
-        return;	//open file failed
-    }
-    /*retrieve stream information*/
-    if ((lError = av_find_stream_info(gFormatCtx)) < 0) {
-        LOGE(1, "Error find stream information: %d", lError);
-        return;
-    } 
-    /*find the video stream and its decoder*/
-    gVideoStreamIndex = av_find_best_stream(gFormatCtx, AVMEDIA_TYPE_VIDEO, -1, -1, &lVideoCodec, 0);
-    if (gVideoStreamIndex == AVERROR_STREAM_NOT_FOUND) {
-        LOGE(1, "Error: cannot find a video stream");
-        return;
-    } else {
-	LOGI(10, "video codec: %s", lVideoCodec->name);
-    }
-    if (gVideoStreamIndex == AVERROR_DECODER_NOT_FOUND) {
-        LOGE(1, "Error: video stream found, but no decoder is found!");
-        return;
-    }   
-    /*open the codec*/
-    gVideoCodecCtx = gFormatCtx->streams[gVideoStreamIndex]->codec;
-    LOGI(10, "open codec: (%d, %d)", gVideoCodecCtx->height, gVideoCodecCtx->width);
-#ifdef SELECTIVE_DECODING
-    gVideoCodecCtx->allow_selective_decoding = 1;
-#endif
-    if (avcodec_open(gVideoCodecCtx, lVideoCodec) < 0) {
-	LOGE(1, "Error: cannot open the video codec!");
-        return;
-    }
-    LOGI(10, "get video info ends");
-}
 
 /*----------------------*/
-
-JNIEXPORT void JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_close(JNIEnv *pEnv, jobject pObj) {
+extern "C" void JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_close(JNIEnv *pEnv, jobject pObj) {
 
 	av_free(is);
     /* close the RGB image */
@@ -724,36 +658,13 @@ JNIEXPORT void JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_close(JNIEnv *
     /*close the video file*/
     av_close_input_file(pFormatCtx);
 
-	unRegisterCallBack(pEnv);	
-}
-
-JNIEXPORT void JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_init(JNIEnv *pEnv, jobject pObj, jstring pFileName) {
-    int l_mbH, l_mbW;
-    /*get the video file name*/
-    gFileName = (char *)(*pEnv)->GetStringUTFChars(pEnv, pFileName, NULL);
-    if (gFileName == NULL) {
-        LOGE(1, "Error: cannot get the video file name!");
-        return;
-    } 
-    LOGI(10, "video file name is %s", gFileName);
-    get_video_info(gFileName);
-    LOGI(10, "initialization done");
-}
-
-JNIEXPORT jstring JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_videoCodecName(JNIEnv *pEnv, jobject pObj) {
-    char* lCodecName = gVideoCodecCtx->codec->name;
-    return (*pEnv)->NewStringUTF(pEnv, lCodecName);
-}
-
-JNIEXPORT jstring JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_videoFormatName(JNIEnv *pEnv, jobject pObj) {
-    char* lFormatName = gFormatCtx->iformat->name;
-    return (*pEnv)->NewStringUTF(pEnv, lFormatName);
+	//unRegisterCallBack(pEnv);	
 }
 
 
 int registerCallBack(JNIEnv *env) {
 	if(mClass == NULL) {
-		mClass = (*env)->FindClass(env, "com/sky/drovik/player/media/MovieView");
+		mClass = env->FindClass("com/sky/drovik/player/media/MovieView");
 		if(mClass == NULL){
 			return -1;
 		}
@@ -767,7 +678,7 @@ int registerCallBack(JNIEnv *env) {
 		LOGI(10,"register local object OK.");
 	}
 	if(refresh == NULL) {
-		refresh = (*env)->GetMethodID(env, mClass, "callBackRefresh","(I)V");
+		refresh = env->GetMethodID( mClass, "callBackRefresh","(I)V");
 		if(refresh == NULL) {
 			//(*env)->DeleteLocalRef(env, mClass);
 			//(*env)->DeleteLocalRef(env, mObject);
@@ -778,11 +689,11 @@ int registerCallBack(JNIEnv *env) {
 }
 
 int GetProviderInstance(JNIEnv *env,jclass obj_class) {
-	jmethodID construction_id = (*env)->GetMethodID(env, obj_class,	"<init>", "()V");
+	jmethodID construction_id = env->GetMethodID(obj_class,	"<init>", "()V");
 	if (construction_id == 0) {
 		return -1;
 	}
-	mObject = (*env)->NewObject(env, obj_class, construction_id);
+	mObject = env->NewObject(obj_class, construction_id);
 	if (mObject == NULL) {
 		return -2;
 	}
