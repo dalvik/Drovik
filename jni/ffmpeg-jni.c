@@ -202,7 +202,7 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
 	//is->pictq_mutex = SDL_CreateMutex();
 	//is->pictq_cond = SDL_CreateCond();
 	pthread_mutex_init(&is->pictq_mutex, NULL);
-	pthread_mutex_init(&is->pictq_cond, NULL);
+	pthread_cond_init(&is->pictq_cond, NULL);
 	
 	AVFormatContext *pFormatCtx;
 	if(av_open_input_file(&pFormatCtx,gFileName , NULL, 0, NULL)!=0) {
@@ -376,8 +376,8 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 		    if (actual_delay < 0.010) {
 			  actual_delay = 0.010;
 		    }
-			LOGE(10, "### refresh delay =  %d",(int)(actual_delay * 1000000 + 500));
-			usleep((int)(actual_delay * 1000000 + 500));
+			//LOGE(10, "### refresh delay =  %d",(int)(actual_delay * 1000000 + 500));
+			
 			fill_bitmap(&info, pixels, vp->pict);
 			if(++is->pictq_rindex == VIDEO_PICTURE_QUEUE_SIZE) {
 				is->pictq_rindex = 0;
@@ -396,6 +396,7 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 				}
 			}
 			(*env)->CallVoidMethod(env, mObject, refresh, MSG_REFRESH);
+			usleep((int)(actual_delay * 1000000 + 500));
 		}
 	}
 	if(registerCallBackRes == 0) {
@@ -416,11 +417,11 @@ int queue_picture(VideoState *is, AVFrame *pFrame, double pts) {
 	pthread_cond_wait(&is->pictq_cond, &is->pictq_mutex);
   }
   //SDL_UnlockMutex(is->pictq_mutex);
-  pthread_mutex_unlock(&is->pictq_mutex);
-  if(is->quit) {
-	if(debug) LOGE(10,"### queue_picture exit");
-    return -1;
-  }
+   pthread_mutex_unlock(&is->pictq_mutex);
+   if(is->quit) {
+	 if(debug) LOGE(10,"### queue_picture exit");
+     return -1;
+   }
     vp = &is->pictq[is->pictq_windex];
 	dst_pix_fmt = PIX_FMT_RGB24;
     sws_scale(is->img_convert_ctx,
@@ -637,7 +638,7 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_getVideoR
 void packet_queue_init(PacketQueue *q) {
 	memset(q, 0, sizeof(PacketQueue));
 	pthread_mutex_init(&q->mutex, NULL);
-	pthread_mutex_init(&q->cond, NULL);
+	pthread_cond_init(&q->cond, NULL);
 }
 
 /*parsing the video file, done by parse thread*/
