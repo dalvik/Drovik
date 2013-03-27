@@ -37,12 +37,17 @@ const int MAX_VIDEOQ_SIZE = 5 * 256 * 1024;
 #define VIDEO_PICTURE_QUEUE_SIZE 1
 #define AV_SYNC_THRESHOLD 10.0//0.01
 #define AV_NOSYNC_THRESHOLD 10000.0//10.0
-
+#define DEFAULT_AV_SYNC_TYPE AV_SYNC_VIDEO_MASTER
+ /* no AV correction is done if too big error */
+#define AV_NOSYNC_THRESHOLD 10.0
+/* we use about AUDIO_DIFF_AVG_NB A-V differences to make the average */
+#define AUDIO_DIFF_AVG_NB   20
+ 
 const int MSG_REFRESH = 1;
 const int MSG_EXIT = 2;
 
 int registerCallBackRes = -1;
-int out_size = AVCODEC_MAX_AUDIO_FRAME_SIZE*10;  
+int out_size = AVCODEC_MAX_AUDIO_FRAME_SIZE*3/2;  
 
 #ifdef WIN32
 typedef  CRITICAL_SECTION ffmpeg_lock_t;
@@ -50,6 +55,11 @@ typedef  CRITICAL_SECTION ffmpeg_lock_t;
 typedef  pthread_mutex_t  ffmpeg_lock_t;
 #endif
 
+enum {
+AV_SYNC_AUDIO_MASTER,
+AV_SYNC_VIDEO_MASTER,
+AV_SYNC_EXTERNAL_CLOCK,
+};
 
 //pthread_mutex_t mut = PTHREAD_MUTEX_INITIALIZER;
 //pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
@@ -108,6 +118,17 @@ typedef struct VideoState {
   ffmpeg_lock_t 	lock;
   double video_current_pts;
   int64_t video_current_pts_time;
+  int  av_sync_type;
+  double external_clock;                   
+  double external_clock_drift;             
+  int64_t external_clock_time;             
+  double external_clock_speed;  
+  double audio_diff_cum; 
+  /* used for AV difference average computation */  
+  double audio_diff_avg_coef;
+  double audio_diff_threshold;
+  int audio_diff_avg_count;
+  
 } VideoState;
 
 uint64_t global_video_pkt_pts = AV_NOPTS_VALUE;
