@@ -169,7 +169,7 @@ void UpdateTextures()
             GL_LUMINANCE, GL_UNSIGNED_BYTE, yuv_buf + (imageHeight * imageWidth * 5) / 4);
 
 }
-
+ 
 static void fill_bitmap(AndroidBitmapInfo*  info, void *pixels, AVFrame *pFrame)
 {
     uint8_t *frameLine;
@@ -368,8 +368,6 @@ int queue_picture(VideoState *is, AVFrame *pFrame, double pts) {
     return -1;
   }
     vp = &is->pictq[is->pictq_windex];
-	//dst_pix_fmt = PIX_FMT_RGB24;
-    //sws_scale(is->img_convert_ctx, pFrame->data,pFrame->linesize, 0,is->video_st->codec->height,pFrameRGB->data,pFrameRGB->linesize);
     vp->pts = pts;	
 	vp->pict = pFrame;
     if (++is->pictq_windex == VIDEO_PICTURE_QUEUE_SIZE) {
@@ -439,7 +437,7 @@ if(is->av_sync_type != AV_SYNC_AUDIO_MASTER) {
 return samples_size;
 }
  
-void *decode_thread(void *arg) {
+void *dispatch_data_thread(void *arg) {
 	JNIEnv *env;
 	if((*g_jvm)->AttachCurrentThread(g_jvm, &env, NULL) != JNI_OK) {
 		LOGE(1, "### start decode thead error");
@@ -448,22 +446,16 @@ void *decode_thread(void *arg) {
 	VideoState *is = (VideoState*)arg;
     AVPacket packet;
     while(1) {
-		if(is->quit) {
-		  break;
-		}
  		if(is->audioq.size > MAX_AUDIOQ_SIZE || is->videoq.size > MAX_VIDEOQ_SIZE) {// 
+			if(is->quit) {
+			  break;
+			}
 		   usleep(5000); //5 ms
 		   continue;
 		}
 		if(av_read_frame(is->pFormatCtx, &packet)<0){
-			/*if(url_ferror(pFormatCtx->pb) == 0) {
-				usleep(100000);
-				LOGE(10,"------1111");
-				continue;
-			} else {
-				LOGE(10,"------2222");
-				break;
-			}*/
+			LOGE(10,"av_read_frame over !!! ");
+			is->quit = 2;
 			usleep(100000);
 			break;
 		}
@@ -476,13 +468,16 @@ void *decode_thread(void *arg) {
 		}
     }
 	while (!is->quit) {
-		usleep(100000);
+		usleep(10000);
 	}
-	LOGI(10,"exit\n");
+	LOGI(10,"dispatch_data_thread exit\n");
 	if((*g_jvm)->DetachCurrentThread(g_jvm) != JNI_OK) {
 		LOGE(1,"### detach decode thread error");
 	}
 	pthread_exit(0);
+	if(debug) {
+		LOGE(1, "### dispatch_data_thread exit");
+	}
 	return ((void *)0);
 }
 
@@ -501,6 +496,9 @@ void *video_thread(void *arg) {
   pFrame=avcodec_alloc_frame();
   int ret;
   for(;;) {
+	if(is->quit == 1 || is->quit == 2) {
+		break;
+	}
     if(packet_queue_get(&is->videoq, packet, 1) < 0) {
 	  if(debug) LOGI(10,"video_thread get packet exit");
       break;
@@ -536,6 +534,9 @@ void *video_thread(void *arg) {
 	LOGE(1,"### detach video thread error");
   }
   pthread_exit(0);
+  if(debug) {
+		LOGI(1,"### video_thread exit");
+  }
   return ((void *)0);
 }
 
@@ -607,12 +608,6 @@ void *audio_thread(void *arg) {
 		(*env)->SetByteArrayRegion(env,buffer, 0, remain, (jbyte *)is->audio_buf);
 
 		(*env)->CallIntMethod(env,audio_track,method_write,buffer,0,remain);
-		//LOGI(10,"ttt audio_buf_index = %d, audio_buf_size = %d,remain = %d, clock = %d", is->audio_buf_index,is->audio_buf_size, remain, is->audio_clock);
-
-		//(*env)->CallIntMethod(env,audio_track,method_write,buffer,0,out_size);
-		//LOGI(10,"ttt audio_buf_index = %d, audio_buf_size = %d,len1 = %d, len = %d", is->audio_buf_index,is->audio_buf_size, len1, len);
-
-		//len -= len1;
 		is->audio_buf_index += remain;	
 	}
 	(*env)->CallVoidMethod(env,audio_track, method_release);
@@ -706,7 +701,7 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
     jint lVideoRes[arrLen];
     int ret;
 	debug = d;
-    
+    setUpFlag = 0;
 	(*env)->GetJavaVM(env, &g_jvm);
 	g_obj = (*env)->NewGlobalRef(env,g_obj);
 	is = av_mallocz(sizeof(VideoState));
@@ -758,12 +753,7 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
 				   pCodecCtx->height,
 				   PIX_FMT_RGB24,
 				   SWS_BICUBIC,
-				   NULL, NULL, NULL);
-		pFrameRGB=avcodec_alloc_frame();		   
-		int numBytes;
-		numBytes=avpicture_get_size(PIX_FMT_RGB24, pCodecCtx->width, pCodecCtx->height);
-		buffer=(uint8_t *)av_malloc(numBytes*sizeof(uint8_t));
-		avpicture_fill((AVPicture *)pFrameRGB, buffer, PIX_FMT_RGB24, pCodecCtx->width, pCodecCtx->height);
+				   NULL, NULL, NULL);	   
 		pCodec=avcodec_find_decoder(pCodecCtx->codec_id);
 		if(!pCodec) {
 			if(debug)  LOGE(1,"Unsupported audio codec!");
@@ -830,6 +820,9 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
     LOGI(1, "time den  = %d,num  = %d, video duration = %d,",pCodecCtx->time_base.num,pCodecCtx->time_base.den, pCodecCtx->bit_rate);
 	imageWidth = pCodecCtx->width;
 	imageHeight = pCodecCtx->height;
+	pthread_cond_init(&s_vsync_cond, NULL);
+	pthread_mutex_init(&s_vsync_mutex, NULL);
+	yuv_buf = (unsigned char *) av_malloc(imageWidth * imageHeight * 3/2);
 	(*env)->SetIntArrayRegion(env, videoInfo, 0, 4, lVideoRes);
 	return  videoInfo;
 }
@@ -838,8 +831,8 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_decodeMedia(JNIEnv * env, jobject
 {
 	int ret;
 	pthread_t decode;
-	is->decode_tid =  pthread_create(&decode, NULL, &decode_thread, is);
-	if(debug)  LOGE(1,"pthread_create  decode_thread");
+	is->decode_tid =  pthread_create(&decode, NULL, &dispatch_data_thread, is);
+	if(debug)  LOGE(1,"pthread_create  dispatch_data_thread");
 	if(debug) LOGI(1,"start thread id = %d", is->decode_tid);
 	pthread_t video;
 	is->video_tid =  pthread_create(&video, NULL, &video_thread, is);
@@ -851,32 +844,17 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_decodeMedia(JNIEnv * env, jobject
 }
 
 int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject this, jstring bitmap){
-/*
-	if((*g_jvm)->AttachCurrentThread(g_jvm, &env, NULL) != JNI_OK) {
-	   LOGE(1, "### start video thead error");
-	   return 0;
-	}
-	
-	AndroidBitmapInfo  info;
-	void*              pixels;
-	int ret;
-    if ((ret = AndroidBitmap_getInfo(env, bitmap, &info)) < 0) {
-        LOGE(1,"AndroidBitmap_getInfo() failed ! error=%d", ret);
-        return bitmap_getinfo_error;
-	}*/
 	VideoPicture *vp;
 	double actual_delay, delay, sync_threshold, ref_clock, diff;
 	while(!is->quit && is->video_st) {
 		if(is->pictq_size == 0) {
+			if(is->quit == 2) {
+				is->quit = 1;
+				break;
+			}
 			usleep(5000);
 			//LOGI(1,"no image, wait.");
 		} else {
-		/*
-			if ((ret = AndroidBitmap_lockPixels(env, bitmap, &pixels)) < 0) {
-				LOGE(1,"AndroidBitmap_lockPixels() failed ! error=%d", ret);
-				continue;
-			}
-			*/
 			// È¡³öÍ¼Ïñ
 			vp = &is->pictq[is->pictq_rindex];
 			is->video_current_pts = vp->pts;
@@ -908,10 +886,21 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 			//LOGE(10, "### refresh delay =  %d",(int)(actual_delay * 1000 + 0.5));
 			//usleep(10000*(int)(actual_delay * 1000 + 0.5));
 			//fill_bitmap(&info, pixels, vp->pict);
+			for (int i = 0, off_set = 0; i < 3; i++) {
+				int nShift = (i == 0) ? 0 : 1;
+				uint8_t *pYUVData = (uint8_t *)vp->pict->data[i];
+				for (int j = 0; j < (imageHeight >> nShift); j++) {
+					memcpy(yuv_buf + off_set, pYUVData, (imageWidth>> nShift));
+					pYUVData += vp->pict->linesize[i];
+					off_set += (imageWidth >> nShift);
+				}
+			}
+			if(flushComplete == 1) {
+				pthread_cond_signal(&s_vsync_cond);
+			}
 			if(++is->pictq_rindex == VIDEO_PICTURE_QUEUE_SIZE) {
 				is->pictq_rindex = 0;
 			}
-			//AndroidBitmap_unlockPixels(env, bitmap);
 			pthread_mutex_lock(&is->pictq_mutex);
 			is->pictq_size--;
 			pthread_cond_signal(&is->pictq_cond);
@@ -924,13 +913,16 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 					continue;
 				}
 			}
-			(*env)->CallVoidMethod(env, mObject, refresh, MSG_REFRESH);
+			//(*env)->CallVoidMethod(env, mObject, refresh, MSG_REFRESH);
 		}
 	}
-	if(registerCallBackRes == 0) {
-		(*env)->CallVoidMethod(env, mObject, refresh, MSG_EXIT);
-	}
-	return 0;
+	//if(registerCallBackRes == 0) {
+	//	(*env)->CallVoidMethod(env, mObject, refresh, MSG_EXIT);
+	//}
+	LOGI(10,"1111111111111111");	
+	exit();
+	LOGI(10,"display thread exit !!!");	
+	return -1;
 }
 
 
@@ -955,14 +947,6 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_getVideoR
 JNIEXPORT void JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_close(JNIEnv *pEnv, jobject pObj) {
 
 	av_free(is);
-    /* close the RGB image */
-    av_free(buffer);
-
-    av_free(pFrameRGB);
-    
-    // Free the YUV frame
-    //av_free(pFrame);
-
     /*close the video codec*/
     //avcodec_close(pCodecCtx);
     /*close the video file*/
@@ -994,19 +978,127 @@ JNIEXPORT jstring JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_videoFormat
     return (*pEnv)->NewStringUTF(pEnv, lFormatName);
 }
 
-JNIEXPORT jstring JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_ffmpegGLInitSize(JNIEnv *pEnv, jobject pObj, int w, int h) {
+JNIEXPORT jint JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_ffmpegGLResize(JNIEnv *pEnv, jobject pObj, int w, int h) {
 	s_w = w;
 	s_h = h;
-	glViewport(0, 0, s_w, s_h);
+	winClientWidth = w;
+	winClientHeight = h;
+	const GLfloat vertices[20] = {
+        // X, Y, Z, U, V
+        -1, -1, 0, 0, 1, // Bottom Left
+        1, -1, 0, 1, 1, //Bottom Right
+        1, 1, 0, 1, 0, //Top Right
+        -1, 1, 0, 0, 0 //Top Left
+    };
+    memcpy(_vertices, vertices, sizeof (_vertices));
+	int maxTextureImageUnits[2];
+    int maxTextureSize[2];
+    glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, maxTextureImageUnits);
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, maxTextureSize);
+	_program = createProgram(g_vertextShader, g_fragmentShader);
+    if (!_program)
+    {	
+		LOGI(10, "### error createProgram");
+		return -3;
+	}
+	int positionHandle = glGetAttribLocation(_program, "aPosition");
+	checkGlError("glGetAttribLocation aPosition");
+	if (positionHandle == -1)
+    {
+		LOGI(10, "### error positionHandle glGetAttribLocation");
+		return -4;
+	}
+	int textureHandle = glGetAttribLocation(_program, "aTextureCoord");
+	checkGlError("glGetAttribLocation aTextureCoord");
+    if (textureHandle == -1)
+    {
+		LOGI(10, "### error  textureHandle glGetAttribLocation");
+		return -5;
+	}
+	// set the vertices array in the shader
+    // _vertices contains 4 vertices with 5 coordinates. 3 for (xyz) for the vertices and 2 for the texture
+    glVertexAttribPointer(positionHandle, 3, GL_FLOAT, false, 5
+            * sizeof (GLfloat), _vertices);
+	checkGlError("glVertexAttribPointer aPosition");
+
+	glEnableVertexAttribArray(positionHandle);
+    checkGlError("glEnableVertexAttribArray positionHandle");
+
+	glVertexAttribPointer(textureHandle, 2, GL_FLOAT, false, 5
+            * sizeof (GLfloat), &_vertices[3]);
+	checkGlError("glVertexAttribPointer maTextureHandle");
+	glEnableVertexAttribArray(textureHandle);
+	checkGlError("glEnableVertexAttribArray textureHandle");
+	glUseProgram(_program);
+    int i = glGetUniformLocation(_program, "Ytex");
+	glUniform1i(i, 0); /* Bind Ytex to texture unit 0 */
+	checkGlError("glUniform1i Ytex");
+	i = glGetUniformLocation(_program, "Utex");
+    glUniform1i(i, 1); /* Bind Utex to texture unit 1 */
+	checkGlError("glGetUniformLocation Utex");
+    i = glGetUniformLocation(_program, "Vtex");
+	checkGlError("glGetUniformLocation");
+    glUniform1i(i, 2); /* Bind Vtex to texture unit 2 */	
+	checkGlError("glUniform1i Vtex");
+	LOGI("native_gl_resize %d %d", w, h);
+	glViewport(0, 0, w, h);
+	checkGlError("glViewport");
+	//SetupTextures();
+	return 1;
 }
 
-JNIEXPORT jstring JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_ffmpegGLResize(JNIEnv *pEnv, jobject pObj) {
-}
-
-JNIEXPORT jstring JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_ffmpegGLRender(JNIEnv *pEnv, jobject pObj) {
+JNIEXPORT void JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_ffmpegGLRender(JNIEnv *pEnv, jobject pObj) {
+	if(setUpFlag ==0) { // un set up
+		setUpFlag = 1;
+		SetupTextures();
+		LOGI(10, "### render imageWidth = %d, setUpFlag = %d ", imageWidth, setUpFlag);
+	}else {
+		if(fullScreenFlag) {
+			fullScreenFlag = 0;
+			glViewport(w_padding, h_padding, winClientWidth, winClientHeight);
+		}
+		glUseProgram(_program);
+		pthread_mutex_lock(&s_vsync_mutex);
+		flushComplete = 0;
+		UpdateTextures();
+		glDrawElements(GL_TRIANGLE_STRIP, 6, GL_UNSIGNED_BYTE, g_indices);
+		flushComplete = 1;
+		pthread_cond_wait(&s_vsync_cond, &s_vsync_mutex);
+		pthread_mutex_unlock(&s_vsync_mutex);
+	}
 }
 
 JNIEXPORT jstring JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_ffmpegGLClose(JNIEnv *pEnv, jobject pObj) {
+	is->quit = 1;
+}
+
+void exit() {
+	pthread_mutex_destroy(&s_vsync_cond);
+	pthread_mutex_destroy(&s_vsync_mutex); 
+	glDeleteTextures(3, _textureIds);
+	glDeleteProgram(_program);
+	//av_free(is);
+	
+	while(1) {
+		if(flushComplete == 1) {
+			if(yuv_buf) {
+				av_free(yuv_buf);
+				yuv_buf = NULL;
+			}
+			break;
+		}else {
+			usleep(5);
+		}
+	}
+    /*av_close_input_file(pFormatCtx);
+	if(pFormatCtx) {
+		avcodec_close(pFormatCtx);
+		av_free(pFormatCtx);
+	}
+	if(pCodecCtx) {
+		avcodec_close(pCodecCtx);
+		av_free(pCodecCtx);
+	}*/
 }
 
 int registerCallBack(JNIEnv *env) {

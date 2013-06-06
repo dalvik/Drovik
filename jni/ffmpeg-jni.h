@@ -65,6 +65,18 @@ const char g_fragmentShader[] = {
 const int MAX_AUDIOQ_SIZE = 5 * 6 * 1024;
 const int MAX_VIDEOQ_SIZE = 5 * 256 * 1024;
 
+int s_w = 0;
+int s_h = 0;
+int w_padding = 0;
+int h_padding = 0;
+int winClientWidth = 0;
+int winClientHeight = 0;
+int setUpFlag = 0;
+int fullScreenFlag = 0;
+int flushComplete = 0;
+int imageWidth = 0;
+int imageHeight = 0;
+unsigned char * yuv_buf = NULL;
 
 #define true 1
 #define false 0
@@ -74,14 +86,7 @@ int _id;
 GLuint _program;
 GLuint _textureIds[3]; // Texture id of Y,U and V texture.
 const char g_indices[] = {0, 3, 2, 0, 2, 1};
-int s_w = 0;
-int s_h = 0;
-int w_padding = 0;
-int h_padding = 0;
 
-int imageWidth = 0;
-int imageHeight = 0;
-unsigned char * yuv_buf = NULL;
 
 //int  VIDEO_PICTURE_QUEUE_SIZE = 5;
 #define VIDEO_PICTURE_QUEUE_SIZE 5
@@ -113,7 +118,9 @@ AV_SYNC_EXTERNAL_CLOCK,
 
 //pthread_mutex_t mut = PTHREAD_MUTEX_INITIALIZER;
 //pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
-  
+static pthread_cond_t s_vsync_cond;
+static pthread_mutex_t s_vsync_mutex;
+
 typedef struct PacketQueue {
 	AVPacketList *first_pkt, *last_pkt;
 	int nb_packets;
@@ -189,7 +196,6 @@ jobject g_obj;
 int frequency = 44100;
 
 char *gFileName;	  //the file name of the video
-uint8_t *buffer;
 AVFormatContext *gFormatCtx;
 int gVideoStreamIndex;    //video stream index
 
@@ -199,8 +205,6 @@ AVCodecContext *pCodecCtx;
 AVCodec *aCodec;
 /* Cheat to keep things simple and just use some globals. */
 AVFormatContext *pFormatCtx;
-///AVFrame *pFrame;
-AVFrame *pFrameRGB;
 
 // “Ù∆µ∞¸∂”¡–
 //PacketQueue audioq;
