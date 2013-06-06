@@ -22,27 +22,87 @@
 #include <libavcodec/avfft.h>
 
 #include <pthread.h>
-#define __STDC_CONSTANT_MACROS
-#ifndef   UINT64_C
-#define   UINT64_C(value)__CONCAT(value,ULL)
-#endif
+#include <GLES2/gl2.h>
+#include <GLES2/gl2ext.h>
 
-#ifndef   INT64_C
-#define   INT64_C(value)__CONCAT(value,ULL)
-#endif
+const char g_vertextShader[] = {
+    "attribute vec4 aPosition;\n"
+    "attribute vec2 aTextureCoord;\n"
+    "varying vec2 vTextureCoord;\n"
+    "void main() {\n"
+    "  gl_Position = aPosition;\n"
+    "  vTextureCoord = aTextureCoord;\n"
+    "}\n"
+};
+
+// The fragment shader.
+// Do YUV to RGB565 conversion.
+const char g_fragmentShader[] = {
+    "precision mediump float;\n"
+    "uniform sampler2D Ytex;\n"
+    "uniform sampler2D Utex,Vtex;\n"
+    "varying vec2 vTextureCoord;\n"
+    "void main(void) {\n"
+    "  float nx,ny,r,g,b,y,u,v;\n"
+    "  mediump vec4 txl,ux,vx;"
+    "  nx=vTextureCoord[0];\n"
+    "  ny=vTextureCoord[1];\n"
+    "  y=texture2D(Ytex,vec2(nx,ny)).r;\n"
+    "  u=texture2D(Utex,vec2(nx,ny)).r;\n"
+    "  v=texture2D(Vtex,vec2(nx,ny)).r;\n"
+
+    "  y=1.1643*(y-0.0625);\n"
+    "  u=u-0.5;\n"
+    "  v=v-0.5;\n"
+
+    "  r=y+1.5958*v;\n"
+    "  g=y-0.39173*u-0.81290*v;\n"
+    "  b=y+2.017*u;\n"
+    "  gl_FragColor=vec4(r,g,b,1.0);\n"
+    "}\n"
+};
+
 const int MAX_AUDIOQ_SIZE = 5 * 6 * 1024;
 const int MAX_VIDEOQ_SIZE = 5 * 256 * 1024;
 
-//int  VIDEO_PICTURE_QUEUE_SIZE = 5;
-#define VIDEO_PICTURE_QUEUE_SIZE 1
-#define AV_SYNC_THRESHOLD 10.0//0.01
-#define AV_NOSYNC_THRESHOLD 10000.0//10.0
+int s_w = 0;
+int s_h = 0;
+int w_padding = 0;
+int h_padding = 0;
+int winClientWidth = 0;
+int winClientHeight = 0;
+int setUpFlag = 0;
+int fullScreenFlag = 0;
+int flushComplete = 0;
+int imageWidth = 0;
+int imageHeight = 0;
+unsigned char * yuv_buf = NULL;
 
+#define true 1
+#define false 0
+
+GLfloat _vertices[20];
+int _id;
+GLuint _program;
+GLuint _textureIds[3]; // Texture id of Y,U and V texture.
+const char g_indices[] = {0, 3, 2, 0, 2, 1};
+
+
+//int  VIDEO_PICTURE_QUEUE_SIZE = 5;
+#define VIDEO_PICTURE_QUEUE_SIZE 5
+#define AV_SYNC_THRESHOLD 0.01
+//#define AV_NOSYNC_THRESHOLD 10000.0//10.0
+#define DEFAULT_AV_SYNC_TYPE AV_SYNC_AUDIO_MASTER
+ /* no AV correction is done if too big error */
+#define AV_NOSYNC_THRESHOLD 10.0
+/* we use about AUDIO_DIFF_AVG_NB A-V differences to make the average */
+#define AUDIO_DIFF_AVG_NB   20
+ 
 const int MSG_REFRESH = 1;
 const int MSG_EXIT = 2;
 
 int registerCallBackRes = -1;
-int out_size = AVCODEC_MAX_AUDIO_FRAME_SIZE*10;  
+int out_size = AVCODEC_MAX_AUDIO_FRAME_SIZE*3/2;  
 
 #ifdef WIN32
 typedef  CRITICAL_SECTION ffmpeg_lock_t;
@@ -50,10 +110,17 @@ typedef  CRITICAL_SECTION ffmpeg_lock_t;
 typedef  pthread_mutex_t  ffmpeg_lock_t;
 #endif
 
+enum {
+AV_SYNC_AUDIO_MASTER,
+AV_SYNC_VIDEO_MASTER,
+AV_SYNC_EXTERNAL_CLOCK,
+};
 
 //pthread_mutex_t mut = PTHREAD_MUTEX_INITIALIZER;
 //pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
-  
+static pthread_cond_t s_vsync_cond;
+static pthread_mutex_t s_vsync_mutex;
+
 typedef struct PacketQueue {
 	AVPacketList *first_pkt, *last_pkt;
 	int nb_packets;
@@ -108,6 +175,17 @@ typedef struct VideoState {
   ffmpeg_lock_t 	lock;
   double video_current_pts;
   int64_t video_current_pts_time;
+  int  av_sync_type;
+  double external_clock;                   
+  double external_clock_drift;             
+  int64_t external_clock_time;             
+  double external_clock_speed;  
+  double audio_diff_cum; 
+  /* used for AV difference average computation */  
+  double audio_diff_avg_coef;
+  double audio_diff_threshold;
+  int audio_diff_avg_count;
+  
 } VideoState;
 
 uint64_t global_video_pkt_pts = AV_NOPTS_VALUE;
@@ -118,17 +196,15 @@ jobject g_obj;
 int frequency = 44100;
 
 char *gFileName;	  //the file name of the video
-uint8_t *buffer;
 AVFormatContext *gFormatCtx;
 int gVideoStreamIndex;    //video stream index
 
 AVCodecContext *gVideoCodecCtx;
 AVCodecContext *aCodecCtx;
+AVCodecContext *pCodecCtx;
 AVCodec *aCodec;
 /* Cheat to keep things simple and just use some globals. */
 AVFormatContext *pFormatCtx;
-///AVFrame *pFrame;
-AVFrame *pFrameRGB;
 
 // “Ù∆µ∞¸∂”¡–
 //PacketQueue audioq;
