@@ -1127,7 +1127,7 @@ $(AVFORMAT_SRC_FILES)
  
 LOCAL_SRC_FILES += ffmpeg-jni.c
 
-LOCAL_LDLIBS := -L$(NDK_PLATFORMS_ROOT)/$(TARGET_PLATFORM)/arch-arm/usr/lib -L$(LOCAL_PATH) -lswscale -llog -ljnigraphics -lz -lm -ldl -lgcc 
+LOCAL_LDLIBS := -L$(NDK_PLATFORMS_ROOT)/$(TARGET_PLATFORM)/arch-arm/usr/lib -L$(LOCAL_PATH) -lswscale -llog -ljnigraphics -lz -lm -ldl -lgcc -lGLESv2 
 
 LOCAL_ARM_MODE := arm
  
