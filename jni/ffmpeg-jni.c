@@ -97,7 +97,6 @@ GLuint createProgram(const char * pVertexSource, const char * pFragmentSource)
     return program;
 }
 
-
 void SetupTextures()
 {
 	glDeleteTextures(3, _textureIds);
@@ -144,9 +143,9 @@ void SetupTextures()
             GL_LUMINANCE, GL_UNSIGNED_BYTE, NULL);
 }
 
-
 void UpdateTextures()
 {
+	flushComplete = 0;
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); 
     // Y
     GLuint currentTextureId = _textureIds[0];
@@ -167,7 +166,7 @@ void UpdateTextures()
     glBindTexture(GL_TEXTURE_2D, currentTextureId);
     glTexSubImage2D(GL_TEXTURE_2D, 0, w_padding/2, h_padding/2, imageWidth / 2, imageHeight / 2,
             GL_LUMINANCE, GL_UNSIGNED_BYTE, yuv_buf + (imageHeight * imageWidth * 5) / 4);
-
+	flushComplete = 1;
 }
  
 static void fill_bitmap(AndroidBitmapInfo*  info, void *pixels, AVFrame *pFrame)
@@ -277,15 +276,16 @@ double get_video_clock(VideoState *is) {
 double get_audio_clock(VideoState *is) {
 	double pts;
 	int hw_buf_size, bytes_per_sec, n;
-
 	pts = is->audio_clock;
 	hw_buf_size = is->audio_buf_size - is->audio_buf_index;
 	bytes_per_sec = 0;
 	n = is->audio_st->codec->channels * 2;
 	if (is->audio_st) {
-		bytes_per_sec = is->audio_st->codec->sample_rate * n;
+	LOGI(1,"bb");
+		bytes_per_sec = frequency * n;
 	}
 	if (bytes_per_sec) {
+	LOGI(1,"cc");
 		pts -= (double)hw_buf_size / bytes_per_sec;
 	}
 	return pts;
@@ -299,7 +299,7 @@ static double get_external_clock(VideoState *is) {
 double get_master_clock(VideoState *is) {
 	if(is->av_sync_type == AV_SYNC_VIDEO_MASTER) {
 		return get_video_clock(is);
-	} else if(is->av_sync_type == AV_SYNC_AUDIO_MASTER) {
+	} else if(is->av_sync_type == AV_SYNC_AUDIO_MASTER && is->audioStream>0) {
 		return get_audio_clock(is);
 	} else {
 		return get_external_clock(is);
@@ -625,71 +625,6 @@ void packet_queue_init(PacketQueue *q) {
 	pthread_mutex_init(&q->cond, NULL);
 }
 
-/*parsing the video file, done by parse thread*/
-static void get_video_info(char *prFilename) {
-    AVCodec *lVideoCodec;
-    int lError;
-    /*some global variables initialization*/
-    LOGI(10, "get video info starts!");
-    /*register the codec*/
-    extern AVCodec ff_h263_decoder;
-    avcodec_register(&ff_h263_decoder);
-    extern AVCodec ff_h264_decoder;
-    avcodec_register(&ff_h264_decoder);
-    extern AVCodec ff_mpeg4_decoder;
-    avcodec_register(&ff_mpeg4_decoder);
-    extern AVCodec ff_mjpeg_decoder;
-    avcodec_register(&ff_mjpeg_decoder);
-    /*register parsers*/
-    //extern AVCodecParser ff_h264_parser;
-    //av_register_codec_parser(&ff_h264_parser);
-    //extern AVCodecParser ff_mpeg4video_parser;
-    //av_register_codec_parser(&ff_mpeg4video_parser);
-    /*register demux*/
-    extern AVInputFormat ff_mov_demuxer;
-    av_register_input_format(&ff_mov_demuxer);
-    //extern AVInputFormat ff_h264_demuxer;
-    //av_register_input_format(&ff_h264_demuxer);
-    /*register the protocol*/
-    extern URLProtocol ff_file_protocol;
-    av_register_protocol2(&ff_file_protocol, sizeof(ff_file_protocol));
-    /*open the video file*/
-    if ((lError = av_open_input_file(&gFormatCtx, gFileName, NULL, 0, NULL)) !=0 ) {
-        LOGE(1, "Error open video file: %d", lError);
-        return;	//open file failed
-    }
-    /*retrieve stream information*/
-    if ((lError = av_find_stream_info(gFormatCtx)) < 0) {
-        LOGE(1, "Error find stream information: %d", lError);
-        return;
-    } 
-    /*find the video stream and its decoder*/
-    gVideoStreamIndex = av_find_best_stream(gFormatCtx, AVMEDIA_TYPE_VIDEO, -1, -1, &lVideoCodec, 0);
-    if (gVideoStreamIndex == AVERROR_STREAM_NOT_FOUND) {
-        LOGE(1, "Error: cannot find a video stream");
-        return;
-    } else {
-	LOGI(10, "video codec: %s", lVideoCodec->name);
-    }
-    if (gVideoStreamIndex == AVERROR_DECODER_NOT_FOUND) {
-        LOGE(1, "Error: video stream found, but no decoder is found!");
-        return;
-    }   
-    /*open the codec*/
-    gVideoCodecCtx = gFormatCtx->streams[gVideoStreamIndex]->codec;
-    LOGI(10, "open codec: (%d, %d)", gVideoCodecCtx->height, gVideoCodecCtx->width);
-#ifdef SELECTIVE_DECODING
-    gVideoCodecCtx->allow_selective_decoding = 1;
-#endif
-    if (avcodec_open(gVideoCodecCtx, lVideoCodec) < 0) {
-	LOGE(1, "Error: cannot open the video codec!");
-        return;
-    }
-    LOGI(10, "get video info ends");
-}
-
-/*----------------------*/
-
 JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideoFile(JNIEnv * env, jobject this,jstring name, jint d) { 
 	jintArray videoInfo;
 	int arrLen = 4;
@@ -706,9 +641,7 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
 	g_obj = (*env)->NewGlobalRef(env,g_obj);
 	is = av_mallocz(sizeof(VideoState));
 	av_register_all();
-    gFileName = (char *)(*env)->GetStringUTFChars(env, name, NULL);
-	//is->pictq_mutex = SDL_CreateMutex();
-	//is->pictq_cond = SDL_CreateCond();
+    char * gFileName = (char *)(*env)->GetStringUTFChars(env, name, NULL);
 	pthread_mutex_init(&is->pictq_mutex, NULL);
 	pthread_mutex_init(&is->pictq_cond, NULL);
 	
@@ -744,16 +677,7 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
     }
 	is->av_sync_type = DEFAULT_AV_SYNC_TYPE;
 	if(videoStream>=0) {
-		pCodecCtx=pFormatCtx->streams[videoStream]->codec;
-		gVideoCodecCtx = pCodecCtx;
-		is->img_convert_ctx = sws_getContext(pCodecCtx->width,
-				   pCodecCtx->height,
-				   pCodecCtx->pix_fmt,
-				   pCodecCtx->width,
-				   pCodecCtx->height,
-				   PIX_FMT_RGB24,
-				   SWS_BICUBIC,
-				   NULL, NULL, NULL);	   
+		pCodecCtx=pFormatCtx->streams[videoStream]->codec;   
 		pCodec=avcodec_find_decoder(pCodecCtx->codec_id);
 		if(!pCodec) {
 			if(debug)  LOGE(1,"Unsupported audio codec!");
@@ -797,15 +721,11 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
 			(*env)->SetIntArrayRegion(env, videoInfo, 0, 4, lVideoRes);
 			return videoInfo;
 		}
-
-
 		LOGE(10,"### get audio info : bite_rate= %d, sample_rate = %d, channels = %d, sample_fmt = %d, frame_size = %d",pFormatCtx->streams[audioStream]->codec->bit_rate, pFormatCtx->streams[audioStream]->codec->sample_rate, pFormatCtx->streams[audioStream]->codec->channels, aCodecCtx->sample_fmt,aCodecCtx->frame_size);
-
 		/* put sample parameters */    
 		aCodecCtx->bit_rate = pFormatCtx->streams[audioStream]->codec->bit_rate;       
 		frequency = pFormatCtx->streams[audioStream]->codec->sample_rate;       
 		aCodecCtx->channels = pFormatCtx->streams[audioStream]->codec->channels;
-
 		is->video_current_pts_time = av_gettime();
 		is->audio_buf = (int16_t *)av_malloc(out_size); 
 		is->audio_buf_size = 0;
@@ -827,7 +747,7 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
 	return  videoInfo;
 }
 
-int Java_com_sky_drovik_player_ffmpeg_JniUtils_decodeMedia(JNIEnv * env, jobject this, jstring rect)
+int Java_com_sky_drovik_player_ffmpeg_JniUtils_decodeMedia(JNIEnv * env, jobject this)
 {
 	int ret;
 	pthread_t decode;
@@ -837,13 +757,15 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_decodeMedia(JNIEnv * env, jobject
 	pthread_t video;
 	is->video_tid =  pthread_create(&video, NULL, &video_thread, is);
 	if(debug)  LOGE(1,"pthread_create  video_thread");
-	pthread_t audio;
-	pthread_create(&audio, NULL, &audio_thread, is);
-	if(debug)  LOGE(1,"pthread_create  audio_thread");
+	if(is->audioStream >0){
+		pthread_t audio;
+		pthread_create(&audio, NULL, &audio_thread, is);
+		if(debug)  LOGE(1,"pthread_create  audio_thread");
+	}
 	return is->video_tid;
 }
 
-int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject this, jstring bitmap){
+int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject this){
 	VideoPicture *vp;
 	double actual_delay, delay, sync_threshold, ref_clock, diff;
 	while(!is->quit && is->video_st) {
@@ -870,6 +792,7 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 			actual_delay = is->frame_timer - (av_gettime() / 1000000.0);
 			if(is->av_sync_type != AV_SYNC_VIDEO_MASTER) {
 				ref_clock = get_master_clock(is);
+				LOGE(1, "ref_clock = %d " , ref_clock);
 				diff = vp->pts - ref_clock;
 				sync_threshold = (delay > AV_SYNC_THRESHOLD) ? delay :	AV_SYNC_THRESHOLD;
 				if(fabs(diff) < AV_NOSYNC_THRESHOLD) {
@@ -885,7 +808,6 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 			}
 			//LOGE(10, "### refresh delay =  %d",(int)(actual_delay * 1000 + 0.5));
 			//usleep(10000*(int)(actual_delay * 1000 + 0.5));
-			//fill_bitmap(&info, pixels, vp->pict);
 			for (int i = 0, off_set = 0; i < 3; i++) {
 				int nShift = (i == 0) ? 0 : 1;
 				uint8_t *pYUVData = (uint8_t *)vp->pict->data[i];
@@ -894,16 +816,13 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 					pYUVData += vp->pict->linesize[i];
 					off_set += (imageWidth >> nShift);
 				}
-			}
-			if(flushComplete == 1) {
-				pthread_cond_signal(&s_vsync_cond);
-			}
+			}	
+			pthread_cond_signal(&s_vsync_cond);
 			if(++is->pictq_rindex == VIDEO_PICTURE_QUEUE_SIZE) {
 				is->pictq_rindex = 0;
 			}
 			pthread_mutex_lock(&is->pictq_mutex);
 			is->pictq_size--;
-			pthread_cond_signal(&is->pictq_cond);
 			pthread_mutex_unlock(&is->pictq_mutex);
 			if(mClass == NULL || mObject == NULL || refresh == NULL) {
 				registerCallBackRes = registerCallBack(env);
@@ -916,12 +835,10 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 			//(*env)->CallVoidMethod(env, mObject, refresh, MSG_REFRESH);
 		}
 	}
-	//if(registerCallBackRes == 0) {
-	//	(*env)->CallVoidMethod(env, mObject, refresh, MSG_EXIT);
-	//}
-	LOGI(10,"1111111111111111");	
+	if(registerCallBackRes == 0) {
+		(*env)->CallVoidMethod(env, mObject, refresh, MSG_EXIT);
+	}	
 	exit();
-	LOGI(10,"display thread exit !!!");	
 	return -1;
 }
 
@@ -953,29 +870,6 @@ JNIEXPORT void JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_close(JNIEnv *
     av_close_input_file(pFormatCtx);
 	
 	unRegisterCallBack(pEnv);	
-}
-
-JNIEXPORT void JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_init(JNIEnv *pEnv, jobject pObj, jstring pFileName) {
-    int l_mbH, l_mbW;
-    /*get the video file name*/
-    gFileName = (char *)(*pEnv)->GetStringUTFChars(pEnv, pFileName, NULL);
-    if (gFileName == NULL) {
-        LOGE(1, "Error: cannot get the video file name!");
-        return;
-    } 
-    LOGI(10, "video file name is %s", gFileName);
-    get_video_info(gFileName);
-    LOGI(10, "initialization done");
-}
-
-JNIEXPORT jstring JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_videoCodecName(JNIEnv *pEnv, jobject pObj) {
-    char* lCodecName = gVideoCodecCtx->codec->name;
-    return (*pEnv)->NewStringUTF(pEnv, lCodecName);
-}
-
-JNIEXPORT jstring JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_videoFormatName(JNIEnv *pEnv, jobject pObj) {
-    char* lFormatName = gFormatCtx->iformat->name;
-    return (*pEnv)->NewStringUTF(pEnv, lFormatName);
 }
 
 JNIEXPORT jint JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_ffmpegGLResize(JNIEnv *pEnv, jobject pObj, int w, int h) {
@@ -1044,6 +938,7 @@ JNIEXPORT jint JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_ffmpegGLResize
 	glViewport(0, 0, w, h);
 	checkGlError("glViewport");
 	//SetupTextures();
+	flushComplete = 0;
 	return 1;
 }
 
@@ -1059,11 +954,11 @@ JNIEXPORT void JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_ffmpegGLRender
 		}
 		glUseProgram(_program);
 		pthread_mutex_lock(&s_vsync_mutex);
-		flushComplete = 0;
 		UpdateTextures();
 		glDrawElements(GL_TRIANGLE_STRIP, 6, GL_UNSIGNED_BYTE, g_indices);
-		flushComplete = 1;
-		pthread_cond_wait(&s_vsync_cond, &s_vsync_mutex);
+		if(flushComplete == 0) {
+			pthread_cond_wait(&s_vsync_cond, &s_vsync_mutex);
+		}
 		pthread_mutex_unlock(&s_vsync_mutex);
 	}
 }
@@ -1073,14 +968,13 @@ JNIEXPORT jstring JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_ffmpegGLClo
 }
 
 void exit() {
-	pthread_mutex_destroy(&s_vsync_cond);
-	pthread_mutex_destroy(&s_vsync_mutex); 
+	flushComplete = 1;
+	pthread_cond_signal(&s_vsync_cond);
 	glDeleteTextures(3, _textureIds);
 	glDeleteProgram(_program);
 	//av_free(is);
-	
 	while(1) {
-		if(flushComplete == 1) {
+		if(updateFlag == 1) {
 			if(yuv_buf) {
 				av_free(yuv_buf);
 				yuv_buf = NULL;
@@ -1090,6 +984,8 @@ void exit() {
 			usleep(5);
 		}
 	}
+	pthread_mutex_destroy(&s_vsync_cond);
+	pthread_mutex_destroy(&s_vsync_mutex);
     /*av_close_input_file(pFormatCtx);
 	if(pFormatCtx) {
 		avcodec_close(pFormatCtx);

@@ -77,7 +77,7 @@ int flushComplete = 0;
 int imageWidth = 0;
 int imageHeight = 0;
 unsigned char * yuv_buf = NULL;
-
+int updateFlag = 0;
 #define true 1
 #define false 0
 
@@ -194,23 +194,12 @@ int debug = 0;
 JavaVM  *g_jvm;
 jobject g_obj; 
 int frequency = 44100;
-
-char *gFileName;	  //the file name of the video
-AVFormatContext *gFormatCtx;
-int gVideoStreamIndex;    //video stream index
-
-AVCodecContext *gVideoCodecCtx;
+/* Cheat to keep things simple and just use some globals. */
+AVFormatContext *pFormatCtx;
 AVCodecContext *aCodecCtx;
 AVCodecContext *pCodecCtx;
 AVCodec *aCodec;
-/* Cheat to keep things simple and just use some globals. */
-AVFormatContext *pFormatCtx;
 
-// 音频包队列
-//PacketQueue audioq;
-
-// 视频包队列
-///PacketQueue videoq;
 
 VideoState    *is;
    
