@@ -8,7 +8,7 @@ SDL_PATH = SDL
 
 include $(LOCAL_PATH)/config.mak
 
-LOCAL_CFLAGS := -DHAVE_AV_CONFIG_H -std=c99 -DMINIUPNPC_GET_SRC_ADDR -D_BSD_SOURCE -D_POSIX_C_SOURCE=1 
+LOCAL_CFLAGS := -DHAVE_AV_CONFIG_H -std=c99
  
 AVUTIL_C_FILES = adler32.c \
     aes.c \
@@ -1125,9 +1125,9 @@ $(AVCODEC_SRC_FILES) \
 $(AVCODEC_ARM_SRC_FILES) \
 $(AVFORMAT_SRC_FILES)
  
-LOCAL_SRC_FILES += ffmpeg-jni.cpp
+LOCAL_SRC_FILES += ffmpeg-jni.c
 
-LOCAL_LDLIBS := -L$(NDK_PLATFORMS_ROOT)/$(TARGET_PLATFORM)/arch-arm/usr/lib -L$(LOCAL_PATH) -lswscale -llog -ljnigraphics -lz -lm -ldl -lgcc 
+LOCAL_LDLIBS := -L$(NDK_PLATFORMS_ROOT)/$(TARGET_PLATFORM)/arch-arm/usr/lib -L$(LOCAL_PATH) -lswscale -llog -ljnigraphics -lz -lm -ldl -lgcc -lGLESv2 
 
 LOCAL_ARM_MODE := arm
  
