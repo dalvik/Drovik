@@ -281,11 +281,9 @@ double get_audio_clock(VideoState *is) {
 	bytes_per_sec = 0;
 	n = is->audio_st->codec->channels * 2;
 	if (is->audio_st) {
-	LOGI(1,"bb");
 		bytes_per_sec = frequency * n;
 	}
 	if (bytes_per_sec) {
-	LOGI(1,"cc");
 		pts -= (double)hw_buf_size / bytes_per_sec;
 	}
 	return pts;
@@ -765,7 +763,12 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_decodeMedia(JNIEnv * env, jobject
 	return is->video_tid;
 }
 
-int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject this){
+void *show_image_thread(void *arg) {
+	JNIEnv *env;
+	if((*g_jvm)->AttachCurrentThread(g_jvm, &env, NULL) != JNI_OK) {
+		LOGE(1, "### start decode thead error");
+		return;
+	}
 	VideoPicture *vp;
 	double actual_delay, delay, sync_threshold, ref_clock, diff;
 	while(!is->quit && is->video_st) {
@@ -779,10 +782,11 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 		} else {
 			// È¡³öÍ¼Ïñ
 			vp = &is->pictq[is->pictq_rindex];
+			/*
 			is->video_current_pts = vp->pts;
 			is->video_current_pts_time = av_gettime();
 			delay = vp->pts - is->frame_last_pts;
-			LOGE(1, "is->video_current_pts = %d, delay = %d",is->video_current_pts,delay);
+			//LOGE(1, "is->video_current_pts = %d, delay = %d",is->video_current_pts,delay);
 			if (delay <= 0 || delay >= 1.0) {
 				delay = is->frame_last_delay;
 			}
@@ -805,7 +809,7 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 			}
 			if (actual_delay < 0.010) {
 			  actual_delay = 0.010;
-			}
+			}*/
 			//LOGE(10, "### refresh delay =  %d",(int)(actual_delay * 1000 + 0.5));
 			//usleep(10000*(int)(actual_delay * 1000 + 0.5));
 			for (int i = 0, off_set = 0; i < 3; i++) {
@@ -817,28 +821,34 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 					off_set += (imageWidth >> nShift);
 				}
 			}	
-			pthread_cond_signal(&s_vsync_cond);
 			if(++is->pictq_rindex == VIDEO_PICTURE_QUEUE_SIZE) {
 				is->pictq_rindex = 0;
 			}
 			pthread_mutex_lock(&is->pictq_mutex);
 			is->pictq_size--;
 			pthread_mutex_unlock(&is->pictq_mutex);
-			if(mClass == NULL || mObject == NULL || refresh == NULL) {
-				registerCallBackRes = registerCallBack(env);
-				LOGI(10,"registerCallBack == %d", registerCallBackRes);	
-				if(registerCallBackRes != 0) {
-					is->quit = 0;				
-					continue;
-				}
-			}
+			pthread_cond_signal(&s_vsync_cond);
+			//if(mClass == NULL || mObject == NULL || refresh == NULL) {
+			//	registerCallBackRes = registerCallBack(env);
+			//	LOGI(10,"registerCallBack == %d", registerCallBackRes);	
+				//if(registerCallBackRes != 0) {
+				//	is->quit = 0;				
+				///	continue;
+				//}
+			//}/**/
 			//(*env)->CallVoidMethod(env, mObject, refresh, MSG_REFRESH);
 		}
 	}
-	if(registerCallBackRes == 0) {
-		(*env)->CallVoidMethod(env, mObject, refresh, MSG_EXIT);
-	}	
+	//if(registerCallBackRes == 0) {
+	//	(*env)->CallVoidMethod(env, mObject, refresh, MSG_EXIT);
+	//}	
+	(*g_jvm)->DetachCurrentThread(g_jvm);
 	exit();
+}
+
+int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject this){
+	pthread_t show;
+	pthread_create(&show, NULL, &show_image_thread, NULL);
 	return -1;
 }
 
