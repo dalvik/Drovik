@@ -311,7 +311,7 @@ int audio_decode_frame(VideoState*is, int16_t *audio_buf, int buf_size, double *
   for (;;) {
     while (is->audio_pkt_size > 0) {
       data_size = AVCODEC_MAX_AUDIO_FRAME_SIZE*3/2;
-      len1 = avcodec_decode_audio3(is->audio_st->codec,
+      len1 = avcodec_decode_audio3(aCodecCtx,
                                    audio_buf, 
                                   &data_size,
                                    pkt);
@@ -321,13 +321,13 @@ int audio_decode_frame(VideoState*is, int16_t *audio_buf, int buf_size, double *
       }
       is->audio_pkt_data += len1;
       is->audio_pkt_size -= len1;
-      if (data_size <= 0) {
+      if (data_size < 0) {
 		continue;
       }
       pts = is->audio_clock;
       *pts_ptr = pts;
-      n = 2 * is->audio_st->codec->channels;
-      is->audio_clock += (double)data_size / (double)(n*is->audio_st->codec->sample_rate);
+      n = 2 * aCodecCtx->channels;
+      is->audio_clock += (double)data_size / (double)(n*aCodecCtx->sample_rate);
       return data_size;
     }
     if (pkt->data) {
@@ -342,8 +342,8 @@ int audio_decode_frame(VideoState*is, int16_t *audio_buf, int buf_size, double *
     is->audio_pkt_data = pkt->data;
     is->audio_pkt_size = pkt->size;
     if (pkt->pts != AV_NOPTS_VALUE) {
-      is->audio_clock = av_q2d(is->audio_st->time_base)*pkt->pts;
-    }
+		is->audio_clock = av_q2d(is->audio_st->time_base)*pkt->pts;
+	}
   }
 }
 
@@ -387,7 +387,7 @@ double synchronize_video(VideoState *is, AVFrame *src_frame, double pts) {
   } else {
     pts = is->video_clock;
   }
-  frame_delay = av_q2d(is->video_st->codec->time_base);
+  frame_delay = av_q2d(pCodecCtx->time_base);
   frame_delay += src_frame->repeat_pict * (frame_delay * 0.5);
   is->video_clock += frame_delay;
   return pts;
@@ -413,7 +413,7 @@ int synchronize_audio(VideoState *is, short *samples, int samples_size, double  
 
 int n;
 double ref_clock;
-n = 2 * is->audio_st->codec->channels;
+n = 2 * aCodecCtx->channels;
 if(is->av_sync_type != AV_SYNC_AUDIO_MASTER) {
 	double diff, avg_diff;
 	int wanted_size, min_size, max_size, nb_samples;
@@ -451,7 +451,7 @@ void *dispatch_data_thread(void *arg) {
 		   usleep(5000); //5 ms
 		   continue;
 		}
-		if(av_read_frame(is->pFormatCtx, &packet)<0){
+		if(av_read_frame(pFormatCtx, &packet)<0){
 			LOGE(10,"av_read_frame over !!! ");
 			is->quit = 2;
 			usleep(100000);
@@ -503,7 +503,7 @@ void *video_thread(void *arg) {
     }
     pts = 0;
     global_video_pkt_pts = packet->pts;
-    len1 = avcodec_decode_video2(is->video_st->codec,
+    len1 = avcodec_decode_video2(pCodecCtx,
 				pFrame,
 				&frameFinished,
 				packet);	
@@ -587,6 +587,7 @@ void *audio_thread(void *arg) {
 	while(!is->quit) {
 		if(is->audio_buf_index >= is->audio_buf_size) {//audio_buf中的数据已经转移完毕了
 		    audio_size = audio_decode_frame(is, is->audio_buf, sizeof(is->audio_buf), &pts);
+			//LOGI(1, "----> audio_decode_frame --- pts = %d", &pts);
 		    if (audio_size < 0) {
 				is->audio_buf_size = (AVCODEC_MAX_AUDIO_FRAME_SIZE * 3) / 2;
 				memset(is->audio_buf, 0, is->audio_buf_size);
@@ -639,18 +640,14 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
 	g_obj = (*env)->NewGlobalRef(env,g_obj);
 	is = av_mallocz(sizeof(VideoState));
 	av_register_all();
-    char * gFileName = (char *)(*env)->GetStringUTFChars(env, name, NULL);
-	pthread_mutex_init(&is->pictq_mutex, NULL);
-	pthread_mutex_init(&is->pictq_cond, NULL);
-	
-	AVFormatContext *pFormatCtx;
+    char * gFileName = (char *)(*env)->GetStringUTFChars(env, name, NULL);	
 	if(av_open_input_file(&pFormatCtx,gFileName , NULL, 0, NULL)!=0) {
 		if(debug) LOGI(10,"Couldn't open file");
 		lVideoRes[0] = open_file_fail;
 		(*env)->SetIntArrayRegion(env, videoInfo, 0, 4, lVideoRes);
 		return videoInfo;
     }
-	is->pFormatCtx = pFormatCtx;    
+	//is->pFormatCtx = pFormatCtx;    
     if(av_find_stream_info(pFormatCtx)<0) {
 		if(debug) LOGI(10,"Unable to get stream info");
 		lVideoRes[0] = get_stream_info_fail;
@@ -662,8 +659,6 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
 	is->audioStream = -1;	
 	int videoStream = -1;
     int audioStream = -1;
-	AVCodec *pCodec;
-	//AVCodecContext *pCodecCtx;
 	dump_format(pFormatCtx, 0, is->filename, 0);
 	for (i=0; i<pFormatCtx->nb_streams; i++) {
 		if(pFormatCtx->streams[i]->codec->codec_type==AVMEDIA_TYPE_VIDEO && videoStream<0) {
@@ -692,6 +687,7 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
 				is->videoStream = videoStream;
 				is->video_st = pFormatCtx->streams[videoStream];
 				is->video_current_pts_time = av_gettime();
+				if(debug)  LOGI(1,"### is->video_current_pts_time = %d",is->video_current_pts_time);
 				is->frame_timer = (double)av_gettime() / 1000000.0;
 				is->frame_last_delay = 40e-3;
 				packet_queue_init(&is->videoq);
@@ -719,29 +715,29 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
 			(*env)->SetIntArrayRegion(env, videoInfo, 0, 4, lVideoRes);
 			return videoInfo;
 		}
-		LOGE(10,"### get audio info : bite_rate= %d, sample_rate = %d, channels = %d, sample_fmt = %d, frame_size = %d",pFormatCtx->streams[audioStream]->codec->bit_rate, pFormatCtx->streams[audioStream]->codec->sample_rate, pFormatCtx->streams[audioStream]->codec->channels, aCodecCtx->sample_fmt,aCodecCtx->frame_size);
-		/* put sample parameters */    
-		aCodecCtx->bit_rate = pFormatCtx->streams[audioStream]->codec->bit_rate;       
-		frequency = pFormatCtx->streams[audioStream]->codec->sample_rate;       
-		aCodecCtx->channels = pFormatCtx->streams[audioStream]->codec->channels;
-		is->video_current_pts_time = av_gettime();
+		/* put sample parameters */          
+		frequency = aCodecCtx->sample_rate;       
+		//is->video_current_pts_time = av_gettime();
 		is->audio_buf = (int16_t *)av_malloc(out_size); 
 		is->audio_buf_size = 0;
 		is->audio_buf_index = 0;
 		memset(&is->audio_pkt, 0, sizeof(is->audio_pkt));
 		packet_queue_init(&is->audioq);
+		LOGE(10,"### get audio info : bite_rate= %d, sample_rate = %d, channels = %d, sample_fmt = %d, frame_size = %d",aCodecCtx->bit_rate, aCodecCtx->sample_rate, aCodecCtx->channels, aCodecCtx->sample_fmt,aCodecCtx->frame_size);
 	}
 	lVideoRes[0] = pCodecCtx->width;
     lVideoRes[1] = pCodecCtx->height;
     lVideoRes[2] = pCodecCtx->time_base.den;
     lVideoRes[3] = pCodecCtx->time_base.num;
-    LOGI(1, "time den  = %d,num  = %d, video duration = %d,",pCodecCtx->time_base.num,pCodecCtx->time_base.den, pCodecCtx->bit_rate);
+    LOGI(1, "video info time base = %d, time_base.den = %d,time_base.num  = %d, bit_rate = %d",is->video_st->time_base,is->video_st->time_base.num,is->video_st->time_base.den, pCodecCtx->bit_rate);//, pCodecCtx->duration
 	imageWidth = pCodecCtx->width;
 	imageHeight = pCodecCtx->height;
 	pthread_cond_init(&s_vsync_cond, NULL);
 	pthread_mutex_init(&s_vsync_mutex, NULL);
 	yuv_buf = (unsigned char *) av_malloc(imageWidth * imageHeight * 3/2);
 	(*env)->SetIntArrayRegion(env, videoInfo, 0, 4, lVideoRes);
+	pthread_mutex_init(&is->pictq_mutex, NULL);
+	pthread_mutex_init(&is->pictq_cond, NULL);
 	return  videoInfo;
 }
 
@@ -760,7 +756,7 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_decodeMedia(JNIEnv * env, jobject
 		pthread_create(&audio, NULL, &audio_thread, is);
 		if(debug)  LOGE(1,"pthread_create  audio_thread");
 	}
-	return is->video_tid;
+	return 0;
 }
 
 void *show_image_thread(void *arg) {
@@ -861,11 +857,6 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_getVideoR
         return NULL;
     }
     jint lVideoRes[4];
-    lVideoRes[0] = 1;//pCodecCtx->width;
-    lVideoRes[1] = 1;//pCodecCtx->height;
-    lVideoRes[2] = 1;//pCodecCtx->time_base.den;
-    lVideoRes[3] = 1;//pCodecCtx->time_base.num;
-    //LOGI(1, "time den  = %d,num  = %d, video duration = %d,",pCodecCtx->time_base.num,pCodecCtx->time_base.den, pCodecCtx->bit_rate);
     (*pEnv)->SetIntArrayRegion(pEnv, lRes, 0, 4, lVideoRes);
     return lRes;
 }

@@ -199,6 +199,7 @@ AVFormatContext *pFormatCtx;
 AVCodecContext *aCodecCtx;
 AVCodecContext *pCodecCtx;
 AVCodec *aCodec;
+AVCodec *pCodec;
 
 
 VideoState    *is;
