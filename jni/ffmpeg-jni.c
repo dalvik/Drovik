@@ -607,6 +607,7 @@ void *audio_thread(void *arg) {
 		(*env)->SetByteArrayRegion(env,buffer, 0, remain, (jbyte *)is->audio_buf);
 
 		(*env)->CallIntMethod(env,audio_track,method_write,buffer,0,remain);
+		if(debug) LOGI(1, "### write audio data...");
 		is->audio_buf_index += remain;	
 	}
 	(*env)->CallVoidMethod(env,audio_track, method_release);
@@ -774,11 +775,10 @@ void *show_image_thread(void *arg) {
 				break;
 			}
 			usleep(5000);
-			//LOGI(1,"no image, wait.");
+			LOGI(1,"no image, wait.");
 		} else {
 			// 取出图像
 			vp = &is->pictq[is->pictq_rindex];
-			/*
 			is->video_current_pts = vp->pts;
 			is->video_current_pts_time = av_gettime();
 			delay = vp->pts - is->frame_last_pts;
@@ -805,7 +805,8 @@ void *show_image_thread(void *arg) {
 			}
 			if (actual_delay < 0.010) {
 			  actual_delay = 0.010;
-			}*/
+			}
+			/**/
 			//LOGE(10, "### refresh delay =  %d",(int)(actual_delay * 1000 + 0.5));
 			//usleep(10000*(int)(actual_delay * 1000 + 0.5));
 			for (int i = 0, off_set = 0; i < 3; i++) {
@@ -824,27 +825,103 @@ void *show_image_thread(void *arg) {
 			is->pictq_size--;
 			pthread_mutex_unlock(&is->pictq_mutex);
 			pthread_cond_signal(&s_vsync_cond);
-			//if(mClass == NULL || mObject == NULL || refresh == NULL) {
-			//	registerCallBackRes = registerCallBack(env);
-			//	LOGI(10,"registerCallBack == %d", registerCallBackRes);	
-				//if(registerCallBackRes != 0) {
-				//	is->quit = 0;				
-				///	continue;
-				//}
-			//}/**/
+			if(mClass == NULL || mObject == NULL || refresh == NULL) {
+				registerCallBackRes = registerCallBack(env);
+				LOGI(10,"registerCallBack == %d", registerCallBackRes);	
+				if(registerCallBackRes != 0) {
+					is->quit = 0;				
+					continue;
+				}
+			}
 			//(*env)->CallVoidMethod(env, mObject, refresh, MSG_REFRESH);
 		}
 	}
-	//if(registerCallBackRes == 0) {
-	//	(*env)->CallVoidMethod(env, mObject, refresh, MSG_EXIT);
-	//}	
+	if(registerCallBackRes == 0) {
+		(*env)->CallVoidMethod(env, mObject, refresh, MSG_EXIT);
+	}	
 	(*g_jvm)->DetachCurrentThread(g_jvm);
 	exit();
 }
-
-int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject this){
+int Java_com_sky_drovik_player_ffmpeg_JniUtils_display2(JNIEnv * env, jobject this){
 	pthread_t show;
 	pthread_create(&show, NULL, &show_image_thread, NULL);
+	return 0;
+}
+
+int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject this){
+	VideoPicture *vp;
+	double actual_delay, delay, sync_threshold, ref_clock, diff;
+	while(!is->quit && is->video_st) {
+		if(is->pictq_size == 0) {
+			if(is->quit == 2) {
+				is->quit = 1;
+				break;
+			}
+			usleep(15000);
+			//LOGI(1,"no image, wait.");
+		} else {
+			// 取出图像
+			vp = &is->pictq[is->pictq_rindex];
+			is->video_current_pts = vp->pts;
+			is->video_current_pts_time = av_gettime();
+			delay = vp->pts - is->frame_last_pts;
+			//LOGE(1, "is->video_current_pts = %d, delay = %d",is->video_current_pts,delay);
+			if (delay <= 0 || delay >= 1.0) {
+				delay = is->frame_last_delay;
+			}
+			is->frame_last_delay = delay;
+			is->frame_last_pts = vp->pts;
+			is->frame_timer += delay;
+			actual_delay = is->frame_timer - (av_gettime() / 1000000.0);
+			if(is->av_sync_type != AV_SYNC_VIDEO_MASTER) {
+				ref_clock = get_master_clock(is);
+				LOGE(1, "ref_clock = %d " , ref_clock);
+				diff = vp->pts - ref_clock;
+				sync_threshold = (delay > AV_SYNC_THRESHOLD) ? delay :	AV_SYNC_THRESHOLD;
+				if(fabs(diff) < AV_NOSYNC_THRESHOLD) {
+					if(diff <= -sync_threshold) {
+						delay = 0;
+					} else if(diff >= sync_threshold) {
+						delay = 2 * delay;
+					}
+				}
+			}
+			if (actual_delay < 0.010) {
+			  actual_delay = 0.010;
+			}
+			//LOGE(10, "### refresh delay =  %d",(int)(actual_delay * 1000 + 0.5));
+			//usleep(10000*(int)(actual_delay * 1000 + 0.5));
+			for (int i = 0, off_set = 0; i < 3; i++) {
+				int nShift = (i == 0) ? 0 : 1;
+				uint8_t *pYUVData = (uint8_t *)vp->pict->data[i];
+				for (int j = 0; j < (imageHeight >> nShift); j++) {
+					memcpy(yuv_buf + off_set, pYUVData, (imageWidth>> nShift));
+					pYUVData += vp->pict->linesize[i];
+					off_set += (imageWidth >> nShift);
+				}
+			}	
+			if(++is->pictq_rindex == VIDEO_PICTURE_QUEUE_SIZE) {
+				is->pictq_rindex = 0;
+			}
+			pthread_cond_signal(&s_vsync_cond);
+			pthread_mutex_lock(&is->pictq_mutex);
+			is->pictq_size--;
+			pthread_mutex_unlock(&is->pictq_mutex);
+			if(mClass == NULL || mObject == NULL || refresh == NULL) {
+				registerCallBackRes = registerCallBack(env);
+				LOGI(10,"registerCallBack == %d", registerCallBackRes);	
+				if(registerCallBackRes != 0) {
+					is->quit = 0;				
+					continue;
+				}
+			}
+			//(*env)->CallVoidMethod(env, mObject, refresh, MSG_REFRESH);
+		}
+	}
+	if(registerCallBackRes == 0) {
+		(*env)->CallVoidMethod(env, mObject, refresh, MSG_EXIT);
+	}
+	exit();
 	return -1;
 }
 
