@@ -102,7 +102,7 @@ const int MSG_REFRESH = 1;
 const int MSG_EXIT = 2;
 
 int registerCallBackRes = -1;
-int out_size = AVCODEC_MAX_AUDIO_FRAME_SIZE*3/2;  
+int out_size = AVCODEC_MAX_AUDIO_FRAME_SIZE*10;  
 
 #ifdef WIN32
 typedef  CRITICAL_SECTION ffmpeg_lock_t;
