@@ -16,7 +16,7 @@ this is the wrapper of the native functions
 #define LOGI(level, ...) if (level <= LOG_LEVEL) {__android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__);}
 #define LOGE(level, ...) if (level <= LOG_LEVEL) {__android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__);}
 
-
+FILE *fp = NULL;//
 static void checkGlError(const char* op)
 {
 	GLint error;
@@ -320,6 +320,7 @@ int audio_decode_frame(VideoState*is, int16_t *audio_buf, int buf_size, double *
 		is->audio_pkt_size = 0;
 		break;
       }
+	  //fwrite(audio_buf, 1, data_size, fp);
       is->audio_pkt_data += len1;
       is->audio_pkt_size -= len1;
       if (data_size < 0) {
@@ -411,11 +412,10 @@ static int get_master_sync_type(VideoState *is) {
 }
 
 int synchronize_audio(VideoState *is, short *samples, int samples_size, double  pts) {
-
-int n;
-double ref_clock;
-n = 2 * is->audio_st->codec->channels;
 if(is->av_sync_type != AV_SYNC_AUDIO_MASTER) {
+	int n;
+	double ref_clock;
+	n = 2 * is->audio_st->codec->channels;
 	double diff, avg_diff;
 	int wanted_size, min_size, max_size, nb_samples;
 	ref_clock = get_master_clock(is);
@@ -559,7 +559,7 @@ void *audio_thread(void *arg) {
 			    12,			/*CHANNEL_IN_STEREO*/
 				2);         /*ENCODING_PCM_16BIT*/
 	LOGI(10,"buffer_size=%i",buffer_size);	
-	pcmBufferLen = AVCODEC_MAX_AUDIO_FRAME_SIZE * 3/2;
+	pcmBufferLen = AVCODEC_MAX_AUDIO_FRAME_SIZE * 5;
 	jbyteArray buffer = (*env)->NewByteArray(env,pcmBufferLen);
 	jmethodID constructor_id = (*env)->GetMethodID(env,audio_track_cls, "<init>",
 			"(IIIIII)V");
@@ -569,7 +569,7 @@ void *audio_thread(void *arg) {
 			frequency,        /*sampleRateInHz*/
 			12,			  /*CHANNEL_IN_STEREO*/
 			2,			  /*ENCODING_PCM_16BIT*/
-			buffer_size*10,  /*bufferSizeInBytes*/
+			buffer_size,  /*bufferSizeInBytes*/
 			1			  /*AudioTrack.MODE_STREAM*/
 	);	
 	//setvolume
@@ -595,6 +595,7 @@ void *audio_thread(void *arg) {
 		    }else {
 				audio_size = synchronize_audio(is, (int16_t *)is->audio_buf,audio_size,pts);
 				is->audio_buf_size = audio_size;
+				//fwrite(is->audio_buf, 1, audio_size, fp);
 		    } 
 		    //每次解码出音频之后，就把音频的索引audio_buf_index值0 从头开始索引
 		    is->audio_buf_index = 0;	
@@ -659,7 +660,7 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
 	is->audioStream = -1;	
 	int videoStream = -1;
     int audioStream = -1;
-	dump_format(pFormatCtx, 0, is->filename, 0);
+	dump_format(pFormatCtx, 0, is->filename, false);
 	for (i=0; i<pFormatCtx->nb_streams; i++) {
 		if(pFormatCtx->streams[i]->codec->codec_type==AVMEDIA_TYPE_VIDEO && videoStream<0) {
 			videoStream = i;
@@ -717,7 +718,7 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_openVideo
 		}
 		/* put sample parameters */          
 		//frequency = aCodecCtx->sample_rate;
-		is->audio_st->codec->sample_fmt = AV_SAMPLE_FMT_S16;
+		//is->audio_st->codec->sample_fmt = AV_SAMPLE_FMT_S16;
 		aCodecCtx->bit_rate = pFormatCtx->streams[audioStream]->codec->bit_rate;
 		aCodecCtx->channels = pFormatCtx->streams[audioStream]->codec->channels;
 		is->video_current_pts_time = av_gettime();
