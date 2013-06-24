@@ -146,6 +146,7 @@ void SetupTextures()
 void UpdateTextures()
 {
 	flushComplete = 0;
+	updateFlag = 0;
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); 
     // Y
     GLuint currentTextureId = _textureIds[0];
@@ -167,6 +168,7 @@ void UpdateTextures()
     glTexSubImage2D(GL_TEXTURE_2D, 0, w_padding/2, h_padding/2, imageWidth / 2, imageHeight / 2,
             GL_LUMINANCE, GL_UNSIGNED_BYTE, yuv_buf + (imageHeight * imageWidth * 5) / 4);
 	flushComplete = 1;
+	updateFlag = 1;
 }
  
 static void fill_bitmap(AndroidBitmapInfo*  info, void *pixels, AVFrame *pFrame)
@@ -309,9 +311,10 @@ int audio_decode_frame(VideoState*is, int16_t *audio_buf, int buf_size, double *
   int len1, data_size, n;
   AVPacket *pkt = &is->audio_pkt;
   double pts;  
+  int index = 0;
   for (;;) {
     while (is->audio_pkt_size > 0) {
-      data_size = AVCODEC_MAX_AUDIO_FRAME_SIZE;
+      data_size = AVCODEC_MAX_AUDIO_FRAME_SIZE*3/2;
       len1 = avcodec_decode_audio3(is->audio_st->codec,
                                    audio_buf, 
                                   &data_size,
@@ -320,12 +323,12 @@ int audio_decode_frame(VideoState*is, int16_t *audio_buf, int buf_size, double *
 		is->audio_pkt_size = 0;
 		break;
       }
-	  //fwrite(audio_buf, 1, data_size, fp);
       is->audio_pkt_data += len1;
       is->audio_pkt_size -= len1;
       if (data_size < 0) {
 		continue;
       }
+	  index +=data_size;
       pts = is->audio_clock;
       *pts_ptr = pts;
       n = 2 * is->audio_st->codec->channels;
@@ -459,7 +462,7 @@ void *dispatch_data_thread(void *arg) {
 			break;
 		}
   		if(packet.stream_index==is->videoStream) {
-			//packet_queue_put(&is->videoq, &packet);
+			packet_queue_put(&is->videoq, &packet);
         } else if (packet.stream_index == is->audioStream) {
 		  packet_queue_put(&is->audioq, &packet);
 		} else {
@@ -504,7 +507,7 @@ void *video_thread(void *arg) {
     }
     pts = 0;
     global_video_pkt_pts = packet->pts;
-    len1 = avcodec_decode_video2(is->audio_st->codec,
+    len1 = avcodec_decode_video2(is->video_st->codec,
 				pFrame,
 				&frameFinished,
 				packet);	
@@ -518,8 +521,8 @@ void *video_thread(void *arg) {
     } else {
       pts = 0;
     }
-    //pts *= av_q2d(is->video_st->time_base);
-	pts *= av_q2d(pCodecCtx->time_base);
+    pts *= av_q2d(is->video_st->time_base);
+	//pts *= av_q2d(pCodecCtx->time_base);
     if (frameFinished) {
        pts = synchronize_video(is, pFrame, pts);
        if (queue_picture(is, pFrame, pts) < 0) {
@@ -559,7 +562,7 @@ void *audio_thread(void *arg) {
 			    12,			/*CHANNEL_IN_STEREO*/
 				2);         /*ENCODING_PCM_16BIT*/
 	LOGI(10,"buffer_size=%i",buffer_size);	
-	pcmBufferLen = AVCODEC_MAX_AUDIO_FRAME_SIZE * 5;
+	pcmBufferLen = AVCODEC_MAX_AUDIO_FRAME_SIZE * 3/2;
 	jbyteArray buffer = (*env)->NewByteArray(env,pcmBufferLen);
 	jmethodID constructor_id = (*env)->GetMethodID(env,audio_track_cls, "<init>",
 			"(IIIIII)V");
@@ -569,7 +572,7 @@ void *audio_thread(void *arg) {
 			frequency,        /*sampleRateInHz*/
 			12,			  /*CHANNEL_IN_STEREO*/
 			2,			  /*ENCODING_PCM_16BIT*/
-			buffer_size,  /*bufferSizeInBytes*/
+			buffer_size*10,  /*bufferSizeInBytes*/
 			1			  /*AudioTrack.MODE_STREAM*/
 	);	
 	//setvolume
@@ -585,7 +588,7 @@ void *audio_thread(void *arg) {
 	jmethodID method_release = (*env)->GetMethodID(env,audio_track_cls,"release","()V");
 	//double ref_clock, sync_threshold, diff;
 	double pts;
-	LOGI(1, "pcmBufferLen = %d, AVCODEC_MAX_AUDIO_FRAME_SIZE = %d, sizeof(is->audio_buf) = %d", pcmBufferLen, AVCODEC_MAX_AUDIO_FRAME_SIZE, sizeof(is->audio_buf));
+	LOGI(1, "pcmBufferLen = %d, AVCODEC_MAX_AUDIO_FRAME_SIZE = %d", pcmBufferLen, AVCODEC_MAX_AUDIO_FRAME_SIZE);
 	while(!is->quit) {
 		if(is->audio_buf_index >= is->audio_buf_size) {//audio_buf中的数据已经转移完毕了
 		    audio_size = audio_decode_frame(is, is->audio_buf, sizeof(is->audio_buf), &pts);
@@ -600,7 +603,6 @@ void *audio_thread(void *arg) {
 		    //每次解码出音频之后，就把音频的索引audio_buf_index值0 从头开始索引
 		    is->audio_buf_index = 0;	
 		}
-	
 		//剩余的数据长度超过音频数据写入的缓冲区的长度
 		remain = is->audio_buf_size - is->audio_buf_index;
 		if(remain > pcmBufferLen) {
@@ -773,7 +775,7 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 				is->quit = 1;
 				break;
 			}
-			usleep(15000);
+			usleep(5000);
 			//LOGI(1,"no image, wait.");
 		} else {
 			// 取出图像
@@ -791,7 +793,7 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 			actual_delay = is->frame_timer - (av_gettime() / 1000000.0);
 			if(is->av_sync_type != AV_SYNC_VIDEO_MASTER) {
 				ref_clock = get_master_clock(is);
-				LOGE(1, "ref_clock = %d " , ref_clock);
+				//LOGE(1, "ref_clock = %d " , ref_clock);
 				diff = vp->pts - ref_clock;
 				sync_threshold = (delay > AV_SYNC_THRESHOLD) ? delay :	AV_SYNC_THRESHOLD;
 				if(fabs(diff) < AV_NOSYNC_THRESHOLD) {
@@ -823,6 +825,7 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 			pthread_mutex_lock(&is->pictq_mutex);
 			is->pictq_size--;
 			pthread_mutex_unlock(&is->pictq_mutex);
+			/*
 			if(mClass == NULL || mObject == NULL || refresh == NULL) {
 				registerCallBackRes = registerCallBack(env);
 				LOGI(10,"registerCallBack == %d", registerCallBackRes);	
@@ -831,7 +834,8 @@ int Java_com_sky_drovik_player_ffmpeg_JniUtils_display(JNIEnv * env, jobject thi
 					continue;
 				}
 			}
-			//(*env)->CallVoidMethod(env, mObject, refresh, MSG_REFRESH);
+			(*env)->CallVoidMethod(env, mObject, refresh, MSG_REFRESH);
+			*/
 		}
 	}
 	if(registerCallBackRes == 0) {
@@ -856,14 +860,7 @@ JNIEXPORT jintArray JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_getVideoR
 
 
 JNIEXPORT void JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_close(JNIEnv *pEnv, jobject pObj) {
-
-	av_free(is);
-    /*close the video codec*/
-    //avcodec_close(pCodecCtx);
-    /*close the video file*/
-    av_close_input_file(pFormatCtx);
-	
-	unRegisterCallBack(pEnv);	
+	is->quit = 1;
 }
 
 JNIEXPORT jint JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_ffmpegGLResize(JNIEnv *pEnv, jobject pObj, int w, int h) {
@@ -963,6 +960,7 @@ JNIEXPORT jstring JNICALL Java_com_sky_drovik_player_ffmpeg_JniUtils_ffmpegGLClo
 
 void exit() {
 	flushComplete = 1;
+	is->quit = 1;
 	pthread_cond_signal(&s_vsync_cond);
 	glDeleteTextures(3, _textureIds);
 	glDeleteProgram(_program);
@@ -978,8 +976,19 @@ void exit() {
 			usleep(5);
 		}
 	}
+	pthread_cond_signal(&is->videoq);
+	pthread_cond_signal(&is->audioq);
+	av_free(is);
+    /*close the video codec*/
+    //avcodec_close(pCodecCtx);
+    /*close the video file*/
+    //av_close_input_file(pFormatCtx);
+	
+	//unRegisterCallBack(pEnv);	
 	pthread_mutex_destroy(&s_vsync_cond);
 	pthread_mutex_destroy(&s_vsync_mutex);
+	pthread_mutex_destroy(&is->pictq_mutex);
+	pthread_mutex_destroy(&is->pictq_cond);
     /*av_close_input_file(pFormatCtx);
 	if(pFormatCtx) {
 		avcodec_close(pFormatCtx);
@@ -1071,3 +1080,45 @@ static void packet_queue_flush(PacketQueue *q)
 	 pthread_mutex_destroy(&q->mutex);
 	 pthread_cond_destroy(&q->cond);
  }
+
+ jboolean Java_com_sky_drovik_player_ffmpeg_JniUtils_isPlaying(JNIEnv * env, jobject this){
+	
+	return false;
+}
+
+ jboolean Java_com_sky_drovik_player_ffmpeg_JniUtils_canPause(JNIEnv * env, jobject this){
+	
+	return false;
+}
+
+ jboolean Java_com_sky_drovik_player_ffmpeg_JniUtils_isPause(JNIEnv * env, jobject this){
+	
+	return false;
+}
+
+ int Java_com_sky_drovik_player_ffmpeg_JniUtils_setPause(JNIEnv * env, jobject this){
+	
+	return 0;
+}
+
+ jboolean Java_com_sky_drovik_player_ffmpeg_JniUtils_canSeekForward(JNIEnv * env, jobject this){
+	
+	return false;
+}
+
+ jboolean Java_com_sky_drovik_player_ffmpeg_JniUtils_canSeekBackward(JNIEnv * env, jobject this){
+	
+	return false;
+}
+ int Java_com_sky_drovik_player_ffmpeg_JniUtils_seekTo(JNIEnv * env, jobject this, int msec){
+	
+	return 0;
+}
+ int Java_com_sky_drovik_player_ffmpeg_JniUtils_getDuration(JNIEnv * env, jobject this){
+	
+	return 0;
+}
+ int Java_com_sky_drovik_player_ffmpeg_JniUtils_getCurrentPosition(JNIEnv * env, jobject this){
+	
+	return 0;
+}
